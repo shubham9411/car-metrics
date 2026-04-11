@@ -279,6 +279,69 @@ let gpsMarker = null;
 let gpsTrackLine = null;
 let gpsMapInitialized = false;
 let gpsBoundsSet = false;
+let fogLayer = null;
+
+/**
+ * L.FogLayer: A custom canvas layer for Fog of War.
+ * Reveals areas by erasing a semi-transparent mask along polylines.
+ */
+L.FogLayer = L.Layer.extend({
+    initialize: function (paths, options) {
+        this._paths = paths || [];
+        L.setOptions(this, options);
+    },
+    onAdd: function (map) {
+        this._map = map;
+        this._canvas = L.DomUtil.create('canvas', 'leaflet-fog-layer');
+        this._canvas.style.pointerEvents = 'none';
+        map.getPanes().overlayPane.appendChild(this._canvas);
+        map.on('move viewreset', this._update, this);
+        this._update();
+    },
+    onRemove: function (map) {
+        L.DomUtil.remove(this._canvas);
+        map.off('move viewreset', this._update, this);
+    },
+    setPaths: function (paths) {
+        this._paths = paths;
+        this._update();
+    },
+    _update: function () {
+        if (!this._map) return;
+        const size = this._map.getSize();
+        this._canvas.width = size.x;
+        this._canvas.height = size.y;
+
+        const pos = this._map.containerPointToLayerPoint([0, 0]);
+        L.DomUtil.setPosition(this._canvas, pos);
+
+        const ctx = this._canvas.getContext('2d');
+        // Clear and fill fog
+        ctx.fillStyle = 'rgba(0,0,0,0.65)';
+        ctx.fillRect(0, 0, size.x, size.y);
+
+        // Punch holes
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 40;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = 'white';
+
+        this._paths.forEach(path => {
+            if (!path || path.length < 1) return;
+            ctx.beginPath();
+            let first = true;
+            path.forEach(pt => {
+                const cp = this._map.latLngToContainerPoint([pt[0], pt[1]]);
+                if (first) { ctx.moveTo(cp.x, cp.y); first = false; }
+                else { ctx.lineTo(cp.x, cp.y); }
+            });
+            ctx.stroke();
+        });
+    }
+});
 
 function initMap() {
     if (gpsMapInitialized) return;
@@ -288,32 +351,25 @@ function initMap() {
     gpsMap = L.map('gpsMap', {
         zoomControl: true,
         attributionControl: false,
-    }).setView([20, 78], 5); // Default: India center
+    }).setView([20, 78], 5);
 
-    // Dark-themed tiles (CartoDB Dark Matter — no key needed)
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        maxZoom: 19,
-        subdomains: 'abcd',
+        maxZoom: 19, subdomains: 'abcd',
     }).addTo(gpsMap);
 
-    // Custom marker icon (blue dot)
+    // Initialize Fog of War
+    fogLayer = new L.FogLayer([]).addTo(gpsMap);
+
     const markerIcon = L.divIcon({
         className: '',
         html: '<div style="width:14px;height:14px;background:#3b82f6;border:3px solid #fff;border-radius:50%;box-shadow:0 0 10px #3b82f680"></div>',
-        iconSize: [14, 14],
-        iconAnchor: [7, 7],
+        iconSize: [14, 14], iconAnchor: [7, 7],
     });
 
     gpsMarker = L.marker([0, 0], { icon: markerIcon }).addTo(gpsMap);
-    gpsTrackLine = L.polyline([], {
-        color: '#3b82f6',
-        weight: 3,
-        opacity: 0.7,
-    }).addTo(gpsMap);
+    gpsTrackLine = L.polyline([], { color: '#3b82f6', weight: 4, opacity: 0.8 }).addTo(gpsMap);
 
     gpsMapInitialized = true;
-
-    // Load initial data
     loadGpsTrack();
 }
 
@@ -323,6 +379,13 @@ function updateMapPosition(lat, lon) {
     gpsMarker.setLatLng(latlng);
     gpsMap.setView(latlng, Math.max(gpsMap.getZoom(), 14));
     el('mapInfo').textContent = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+
+    // Live fog reveal: Add current point to the latest trip in fogLayer
+    if (fogLayer && fogLayer._paths.length > 0) {
+        const lastTrip = fogLayer._paths[fogLayer._paths.length - 1];
+        lastTrip.push([lat, lon]);
+        fogLayer._update();
+    }
 }
 
 async function loadGpsTrack() {
@@ -334,6 +397,9 @@ async function loadGpsTrack() {
 
         // Draw multiple disjoint polylines representing historically isolated trips
         gpsTrackLine.setLatLngs(tripsArray);
+
+        // Update Fog of War paths
+        if (fogLayer) fogLayer.setPaths(tripsArray);
 
         // Set the active marker onto the very last known point, if it exists
         const lastTrip = tripsArray[tripsArray.length - 1];

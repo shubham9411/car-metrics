@@ -120,7 +120,10 @@ class CarMetrics:
 
         # Create all tasks
         tasks = [
-            asyncio.create_task(self.imu.run(on_reading=self.crash_detector.check)),
+            asyncio.create_task(self.imu.run(
+                on_reading=self.crash_detector.check,
+                is_car_on_func=lambda: self.trip_manager.active_trip_id is not None
+            )),
             asyncio.create_task(self.gps.run()),
             asyncio.create_task(self.camera.run()),
             asyncio.create_task(self.obd.run()),

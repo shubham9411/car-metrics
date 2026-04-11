@@ -249,27 +249,23 @@ class IMUPoller:
         """Read all sensors once. Returns combined dict."""
         sim_file = os.path.join(config.DATA_DIR, ".simulate_data")
         if os.path.exists(sim_file) and self.gps:
+            # ... (simulation code) ...
             t = time.time()
             fix = self.gps.last_fix
             speed = (fix["speed_knots"] * 1.852) if (fix and fix.get("speed_knots") is not None) else 0.0
             course = fix["course"] if (fix and fix.get("course") is not None) else 0.0
             alt = fix["alt"] if (fix and fix.get("alt") is not None) else 15.0
             
-            # Simulate Accel (Gs)
-            
-            # Longitudinal G (acceleration/braking)
             accel_val = (speed - self._last_sim_speed) * 0.5
             ax = -accel_val + random.uniform(-0.02, 0.02)
             
-            # Lateral G (cornering)
             course_delta = course - self._last_sim_course
             if course_delta > 180: course_delta -= 360
             if course_delta < -180: course_delta += 360
             ay = (course_delta * 0.1) * (speed / 50.0) + random.uniform(-0.02, 0.02)
             
-            # Vertical G (gravity + bumps + potholes)
             az = 1.0 + random.uniform(-0.05, 0.05)
-            if random.random() < 0.02: # 2% chance of pothole
+            if random.random() < 0.02: 
                 az += random.uniform(0.5, 1.2)
             
             self._last_sim_speed = speed
@@ -285,16 +281,24 @@ class IMUPoller:
                 "altitude": alt
             }
 
+        # Real hardware path
+        if self._bus is None:
+            # Re-attempt hardware init if we were previously in simulation
+            self._init_hardware()
+            if self._bus is None:
+                raise RuntimeError("IMU hardware not initialized and simulation disabled")
+
         reading = {"ts": time.time()}
         reading.update(self._read_accel_gyro())
         reading.update(self._read_magnetometer())
         reading.update(self._read_bmp_temp_pressure())
         return reading
 
-    async def run(self, on_reading=None):
+    async def run(self, on_reading=None, is_car_on_func=None):
         """
         Async poll loop at configured Hz.
         on_reading: optional callback(reading_dict) for crash detection etc.
+        is_car_on_func: callback returning bool to guard DB insertion.
         """
         self._init_hardware()
         self._running = True
@@ -304,19 +308,37 @@ class IMUPoller:
 
         from storage import db
 
+        last_heartbeat = 0
         while self._running:
             try:
                 t0 = time.monotonic()
                 reading = self.read_once()
-                self._batch.append(reading)
-
-                # Callback for crash detection etc.
+                
+                # Callback for crash detection (always runs for safety/triggering)
                 if on_reading:
                     on_reading(reading)
 
-                # Flush batch to SQLite
-                if len(self._batch) >= config.IMU_BATCH_SIZE:
-                    db.insert_imu_batch(self._batch)
+                # Car on logic
+                sim_file = os.path.join(config.DATA_DIR, ".simulate_data")
+                car_on = is_car_on_func() if is_car_on_func else True
+                
+                # Log to DB if:
+                # 1. Car is on (high-frequency 10Hz)
+                # 2. Simulation is on (high-frequency 10Hz)
+                # 3. Heartbeat interval: once every 1 second when idle
+                is_sim = os.path.exists(sim_file)
+                now = time.time()
+                is_heartbeat = (now - last_heartbeat >= 1.0)
+
+                if car_on or is_sim or is_heartbeat:
+                    self._batch.append(reading)
+                    if is_heartbeat:
+                        last_heartbeat = now
+                    
+                    if len(self._batch) >= config.IMU_BATCH_SIZE or is_heartbeat:
+                        db.insert_imu_batch(self._batch)
+                        self._batch.clear()
+                else:
                     self._batch.clear()
 
                 # Sleep remaining interval
@@ -326,7 +348,7 @@ class IMUPoller:
 
             except Exception as e:
                 logger.error("IMU read error: %s", e)
-                await asyncio.sleep(1)
+                await asyncio.sleep(2)
 
     def stop(self):
         """Stop polling and flush remaining batch."""
