@@ -91,6 +91,16 @@ class CarMetrics:
 
             await asyncio.sleep(config.HEARTBEAT_INTERVAL_SEC)
 
+    async def _obd_camera_link(self):
+        """Keep camera.obd_connected in sync with OBD state."""
+        while not self._shutdown_event.is_set():
+            connected = (
+                self.obd._connection is not None
+                and self.obd._connection.is_connected()
+            )
+            self.camera.obd_connected = connected
+            await asyncio.sleep(5)
+
     async def start(self):
         """Start all tasks in the event loop."""
         logger.info("=" * 50)
@@ -109,6 +119,7 @@ class CarMetrics:
             asyncio.create_task(self.obd.run()),
             asyncio.create_task(self.sync_engine.run()),
             asyncio.create_task(self._heartbeat()),
+            asyncio.create_task(self._obd_camera_link()),
         ]
 
         # Wait for shutdown signal

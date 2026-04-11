@@ -47,6 +47,8 @@ echo "→ Installing system packages..."
 sudo apt-get update -qq
 sudo apt-get install -y --no-install-recommends \
     python3-pip \
+    python3-full \
+    python3-venv \
     python3-picamera2 \
     python3-libcamera \
     i2c-tools \
@@ -54,10 +56,21 @@ sudo apt-get install -y --no-install-recommends \
     bluez \
     python3-smbus
 
-# Install Python dependencies
-echo "→ Installing Python packages..."
-pip3 install --break-system-packages -r requirements.txt 2>/dev/null || \
-pip3 install -r requirements.txt
+# Create virtualenv (--system-site-packages so apt-installed picamera2/smbus work)
+VENV_DIR="/home/dietpi/car-metrics/venv"
+echo "→ Creating Python venv at ${VENV_DIR}..."
+python3 -m venv --system-site-packages "${VENV_DIR}"
+
+# Install Python dependencies inside venv
+echo "→ Installing Python packages in venv..."
+"${VENV_DIR}/bin/pip" install --upgrade pip
+"${VENV_DIR}/bin/pip" install -r requirements.txt
+
+# python-obd needs special handling (no wheel for Python 3.13/ARM)
+echo "→ Installing python-obd (may build from source)..."
+"${VENV_DIR}/bin/pip" install obd 2>/dev/null || \
+"${VENV_DIR}/bin/pip" install git+https://github.com/brendan-w/python-OBD.git 2>/dev/null || \
+echo "  ⚠ python-obd install failed — OBD2 will be disabled. Install manually later."
 
 # Setup Bluetooth for OBD2 ELM327
 echo "→ Setting up Bluetooth serial..."
@@ -76,11 +89,14 @@ sudo usermod -aG i2c,dialout,video,bluetooth dietpi 2>/dev/null || true
 echo "→ Creating data directory..."
 mkdir -p /home/dietpi/car-metrics-data/images
 
-# Install systemd service
-echo "→ Installing systemd service..."
+# Install systemd services
+echo "→ Installing systemd services..."
 sudo cp car-metrics.service /etc/systemd/system/
+sudo cp car-metrics-web.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable car-metrics
+# Web dashboard is NOT auto-started. Start manually when needed:
+#   sudo systemctl start car-metrics-web
 
 echo ""
 echo "=== Setup Complete ==="
@@ -93,4 +109,5 @@ echo "  3. Pair Bluetooth ELM327:"
 echo "     sudo bluetoothctl → scan on → pair XX:XX → trust XX:XX → quit"
 echo "     sudo rfcomm bind 0 XX:XX:XX:XX:XX:XX"
 echo "  4. Start: sudo systemctl start car-metrics"
-echo "  5. Logs:  journalctl -u car-metrics -f"
+echo "  5. Web:   sudo systemctl start car-metrics-web  (manual, not auto-start)"
+echo "  6. Logs:  journalctl -u car-metrics -f"

@@ -26,7 +26,8 @@ def get_connection() -> sqlite3.Connection:
     global _conn
     if _conn is None:
         _ensure_dirs()
-        _conn = sqlite3.connect(config.DB_PATH, check_same_thread=False)
+        _conn = sqlite3.connect(config.DB_PATH, check_same_thread=False,
+                                  isolation_level=None)  # autocommit for fresh cross-process reads
         # Crash-safe WAL mode
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.execute("PRAGMA synchronous=NORMAL")

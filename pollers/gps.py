@@ -2,11 +2,14 @@
 Car Metrics — GPS Poller
 Reads NEO-8M GPS via UART using pyserial + pynmea2.
 Parses GGA (position) and RMC (speed/course) sentences.
+Falls back to IP geolocation or default coords when indoors.
 """
 
 import asyncio
+import json
 import logging
 import time
+import urllib.request
 
 import serial
 import pynmea2
@@ -24,6 +27,8 @@ class GPSPoller:
         self._serial = None
         self._running = False
         self._last_fix = None  # latest fix dict, shared with other modules
+        self._has_satellite_fix = False
+        self._fallback_fix = None
 
     @property
     def last_fix(self) -> dict | None:
@@ -43,10 +48,68 @@ class GPSPoller:
             config.GPS_BAUD_RATE,
         )
 
+    def _get_fallback_location(self) -> dict | None:
+        """Get fallback location from IP geolocation or config defaults."""
+        # Try IP geolocation first
+        if config.GPS_USE_IP_FALLBACK:
+            try:
+                req = urllib.request.Request(
+                    "http://ip-api.com/json/?fields=lat,lon,city,status",
+                    headers={"User-Agent": "car-metrics/1.0"},
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read().decode())
+                    if data.get("status") == "success":
+                        fix = {
+                            "ts": time.time(),
+                            "lat": data["lat"],
+                            "lon": data["lon"],
+                            "alt": None,
+                            "speed_knots": None,
+                            "course": None,
+                            "satellites": 0,
+                            "fix_quality": 0,  # 0 = no satellite fix
+                        }
+                        logger.info(
+                            "GPS fallback via IP: (%.4f, %.4f) — %s",
+                            fix["lat"], fix["lon"], data.get("city", "?"),
+                        )
+                        return fix
+            except Exception as e:
+                logger.debug("IP geolocation failed: %s", e)
+
+        # Fall back to config defaults
+        if config.GPS_FALLBACK_LAT != 0 and config.GPS_FALLBACK_LON != 0:
+            fix = {
+                "ts": time.time(),
+                "lat": config.GPS_FALLBACK_LAT,
+                "lon": config.GPS_FALLBACK_LON,
+                "alt": None,
+                "speed_knots": None,
+                "course": None,
+                "satellites": 0,
+                "fix_quality": 0,
+            }
+            logger.info(
+                "GPS fallback via config: (%.4f, %.4f)",
+                fix["lat"], fix["lon"],
+            )
+            return fix
+
+        return None
+
     async def run(self):
         """Async poll loop — reads NMEA lines from serial."""
         self._init_serial()
         self._running = True
+
+        # Get fallback location for when we're indoors
+        self._fallback_fix = await asyncio.get_event_loop().run_in_executor(
+            None, self._get_fallback_location
+        )
+        if self._fallback_fix and not self._has_satellite_fix:
+            self._last_fix = self._fallback_fix
+            db.insert_gps_fix(self._fallback_fix)
 
         logger.info("GPS poller started")
 
@@ -61,6 +124,7 @@ class GPSPoller:
 
                 fix = self._parse_line(line)
                 if fix:
+                    self._has_satellite_fix = True
                     self._last_fix = fix
                     db.insert_gps_fix(fix)
 

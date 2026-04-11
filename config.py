@@ -31,6 +31,12 @@ GPS_SERIAL_PORT = os.environ.get("CM_GPS_PORT", "/dev/serial0")
 GPS_BAUD_RATE = int(os.environ.get("CM_GPS_BAUD", "9600"))
 GPS_POLL_HZ = 1  # GPS modules output at 1Hz
 
+# Fallback when GPS has no satellite fix (indoors etc.)
+# Set your home/default location here
+GPS_FALLBACK_LAT = float(os.environ.get("CM_GPS_FALLBACK_LAT", "0"))
+GPS_FALLBACK_LON = float(os.environ.get("CM_GPS_FALLBACK_LON", "0"))
+GPS_USE_IP_FALLBACK = os.environ.get("CM_GPS_IP_FALLBACK", "true").lower() == "true"
+
 # ──────────────────────────────────────────────
 # Camera (OV5647)
 # ──────────────────────────────────────────────

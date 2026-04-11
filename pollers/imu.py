@@ -36,6 +36,15 @@ _HMC_CFG_B = 0x01
 _HMC_MODE = 0x02
 _HMC_DATA = 0x03  # 6 bytes: x, z, y (note: z before y!)
 _HMC_SCALE = 1090.0  # Gain = 1090 LSb/Gauss for ±1.3Ga
+_HMC_ADDR = 0x1E
+
+# ─── QMC5883L Registers (common on GY-87 clones) ─
+_QMC_ADDR = 0x0D
+_QMC_CTRL1 = 0x09
+_QMC_CTRL2 = 0x0A
+_QMC_SET_RESET = 0x0B
+_QMC_DATA = 0x00  # 6 bytes: x_l, x_h, y_l, y_h, z_l, z_h
+_QMC_SCALE = 12000.0  # LSb/Gauss at 8G range
 
 
 class IMUPoller:
@@ -46,6 +55,8 @@ class IMUPoller:
         self._bmp_cal = None
         self._batch = []
         self._running = False
+        self._mag_type = None  # 'hmc', 'qmc', or None
+        self._mag_addr = None
 
     def _init_hardware(self):
         """Initialize I2C bus and configure sensors."""
@@ -55,25 +66,51 @@ class IMUPoller:
 
         # ── MPU6050: wake up ──
         self._bus.write_byte_data(config.MPU6050_ADDR, _MPU_PWR_MGMT_1, 0x00)
-        # Enable I2C bypass so we can talk to HMC5883L directly
-        self._bus.write_byte_data(config.MPU6050_ADDR, _MPU_INT_PIN_CFG, 0x02)
-        logger.info("MPU6050 initialized at 0x%02X", config.MPU6050_ADDR)
+        # Enable I2C bypass so we can talk to magnetometer directly
+        # Set both BYPASS_EN and LATCH_INT_EN bits
+        self._bus.write_byte_data(config.MPU6050_ADDR, _MPU_INT_PIN_CFG, 0x22)
+        import time as _t; _t.sleep(0.1)  # let bypass settle
+        logger.info("MPU6050 initialized at 0x%02X (bypass enabled)", config.MPU6050_ADDR)
 
         # ── BMP180: read calibration data ──
         self._bmp_cal = self._read_bmp_calibration()
         logger.info("BMP180 initialized at 0x%02X", config.BMP180_ADDR)
 
-        # ── HMC5883L: continuous measurement mode ──
+        # ── Magnetometer: detect QMC5883L or HMC5883L ──
+        self._init_magnetometer()
+
+    def _init_magnetometer(self):
+        """Auto-detect and configure QMC5883L or HMC5883L."""
+        # Try QMC5883L first (0x0D) — most common on GY-87 clones
         try:
-            self._bus.write_byte_data(config.HMC5883L_ADDR, _HMC_CFG_A, 0x70)  # 8 avg, 15Hz, normal
-            self._bus.write_byte_data(config.HMC5883L_ADDR, _HMC_CFG_B, 0x20)  # gain 1090
-            self._bus.write_byte_data(config.HMC5883L_ADDR, _HMC_MODE, 0x00)   # continuous
-            logger.info("HMC5883L initialized at 0x%02X", config.HMC5883L_ADDR)
+            self._bus.read_byte_data(_QMC_ADDR, 0x0D)  # chip ID register
+            # Configure: continuous mode, 200Hz, 8G range, 512 oversampling
+            self._bus.write_byte_data(_QMC_ADDR, _QMC_SET_RESET, 0x01)
+            self._bus.write_byte_data(_QMC_ADDR, _QMC_CTRL2, 0x40)  # soft reset
+            import time as _t; _t.sleep(0.05)
+            self._bus.write_byte_data(_QMC_ADDR, _QMC_SET_RESET, 0x01)
+            # CTRL1: mode=continuous(01), ODR=200Hz(11), range=8G(01), OSR=512(00)
+            self._bus.write_byte_data(_QMC_ADDR, _QMC_CTRL1, 0x0D)
+            self._mag_type = 'qmc'
+            self._mag_addr = _QMC_ADDR
+            logger.info("QMC5883L detected at 0x%02X", _QMC_ADDR)
+            return
         except OSError:
-            logger.warning(
-                "HMC5883L not found at 0x%02X — may be QMC5883L (0x0D). "
-                "Magnetometer disabled.", config.HMC5883L_ADDR
-            )
+            pass
+
+        # Try HMC5883L (0x1E)
+        try:
+            self._bus.write_byte_data(_HMC_ADDR, _HMC_CFG_A, 0x70)  # 8 avg, 15Hz
+            self._bus.write_byte_data(_HMC_ADDR, _HMC_CFG_B, 0x20)  # gain 1090
+            self._bus.write_byte_data(_HMC_ADDR, _HMC_MODE, 0x00)   # continuous
+            self._mag_type = 'hmc'
+            self._mag_addr = _HMC_ADDR
+            logger.info("HMC5883L detected at 0x%02X", _HMC_ADDR)
+            return
+        except OSError:
+            pass
+
+        logger.warning("No magnetometer found at 0x0D or 0x1E — compass disabled")
 
     def _read_word(self, addr: int, reg: int) -> int:
         """Read a signed 16-bit word (big-endian) from I2C."""
@@ -100,13 +137,23 @@ class IMUPoller:
         return val - 65536 if val >= 32768 else val
 
     def _read_magnetometer(self) -> dict:
-        """Read magnetometer from HMC5883L."""
+        """Read magnetometer — auto-selects QMC or HMC protocol."""
+        if self._mag_type is None:
+            return {"mx": None, "my": None, "mz": None}
+
         try:
-            data = self._bus.read_i2c_block_data(config.HMC5883L_ADDR, _HMC_DATA, 6)
-            # HMC5883L outputs: X_H, X_L, Z_H, Z_L, Y_H, Y_L
-            mx = self._to_signed(data[0], data[1]) / _HMC_SCALE
-            mz = self._to_signed(data[2], data[3]) / _HMC_SCALE
-            my = self._to_signed(data[4], data[5]) / _HMC_SCALE
+            if self._mag_type == 'qmc':
+                # QMC5883L: X_L, X_H, Y_L, Y_H, Z_L, Z_H (little-endian!)
+                data = self._bus.read_i2c_block_data(_QMC_ADDR, _QMC_DATA, 6)
+                mx = self._to_signed(data[1], data[0]) / _QMC_SCALE
+                my = self._to_signed(data[3], data[2]) / _QMC_SCALE
+                mz = self._to_signed(data[5], data[4]) / _QMC_SCALE
+            else:
+                # HMC5883L: X_H, X_L, Z_H, Z_L, Y_H, Y_L (big-endian)
+                data = self._bus.read_i2c_block_data(_HMC_ADDR, _HMC_DATA, 6)
+                mx = self._to_signed(data[0], data[1]) / _HMC_SCALE
+                mz = self._to_signed(data[2], data[3]) / _HMC_SCALE
+                my = self._to_signed(data[4], data[5]) / _HMC_SCALE
             return {"mx": mx, "my": my, "mz": mz}
         except OSError:
             return {"mx": None, "my": None, "mz": None}
@@ -129,6 +176,7 @@ class IMUPoller:
         bus = self._bus
         addr = config.BMP180_ADDR
         cal = self._bmp_cal
+        oss = 0  # oversampling setting
 
         # Read raw temperature
         bus.write_byte_data(addr, _BMP_CTRL, _BMP_TEMP_CMD)
@@ -136,40 +184,52 @@ class IMUPoller:
         ut = self._read_word(addr, _BMP_DATA)
 
         # Read raw pressure (OSS=0)
-        bus.write_byte_data(addr, _BMP_CTRL, _BMP_PRES_CMD)
+        bus.write_byte_data(addr, _BMP_CTRL, _BMP_PRES_CMD + (oss << 6))
         time.sleep(0.005)
-        up = self._read_word(addr, _BMP_DATA)
+        msb = bus.read_byte_data(addr, _BMP_DATA)
+        lsb = bus.read_byte_data(addr, _BMP_DATA + 1)
+        xlsb = bus.read_byte_data(addr, _BMP_DATA + 2)
+        up = ((msb << 16) + (lsb << 8) + xlsb) >> (8 - oss)
 
-        # Compensate temperature
-        x1 = (ut - cal["AC6"]) * cal["AC5"] / 32768
-        x2 = cal["MC"] * 2048 / (x1 + cal["MD"])
+        # === Temperature compensation (integer math per datasheet) ===
+        x1 = ((ut - cal["AC6"]) * cal["AC5"]) >> 15
+        denom = x1 + cal["MD"]
+        if denom == 0:
+            return {"pressure": None, "temp_c": None, "altitude": None}
+        x2 = (cal["MC"] << 11) // denom
         b5 = x1 + x2
-        temp_c = (b5 + 8) / 160
+        temp_c = ((b5 + 8) >> 4) / 10.0
 
-        # Compensate pressure
+        # === Pressure compensation (integer math per datasheet) ===
         b6 = b5 - 4000
-        x1 = (cal["B2"] * (b6 * b6 / 4096)) / 2048
-        x2 = cal["AC2"] * b6 / 2048
+        x1 = (cal["B2"] * ((b6 * b6) >> 12)) >> 11
+        x2 = (cal["AC2"] * b6) >> 11
         x3 = x1 + x2
-        b3 = (((cal["AC1"] * 4 + int(x3)) << 0) + 2) / 4
-        x1 = cal["AC3"] * b6 / 8192
-        x2 = (cal["B1"] * (b6 * b6 / 4096)) / 65536
-        x3 = ((x1 + x2) + 2) / 4
-        b4 = cal["AC4"] * (x3 + 32768) / 32768
-        b7 = (up - b3) * 50000
+        b3 = (((cal["AC1"] * 4 + x3) << oss) + 2) // 4
+        x1 = (cal["AC3"] * b6) >> 13
+        x2 = (cal["B1"] * ((b6 * b6) >> 12)) >> 16
+        x3 = ((x1 + x2) + 2) >> 2
+        b4 = (cal["AC4"] * (x3 + 32768)) >> 15
+        if b4 == 0:
+            return {"pressure": None, "temp_c": temp_c, "altitude": None}
+        b7 = (up - b3) * (50000 >> oss)
         if b7 < 0x80000000:
-            p = (b7 * 2) / b4
+            p = (b7 * 2) // b4
         else:
-            p = (b7 / b4) * 2
-        x1 = (p / 256) ** 2
-        x1 = (x1 * 3038) / 65536
-        x2 = (-7357 * p) / 65536
-        pressure = p + (x1 + x2 + 3791) / 16  # Pa
+            p = (b7 // b4) * 2
+        x1 = (p >> 8) * (p >> 8)
+        x1 = (x1 * 3038) >> 16
+        x2 = (-7357 * p) >> 16
+        pressure = p + ((x1 + x2 + 3791) >> 4)
 
-        # Simple altitude from pressure (sea level = 101325 Pa)
-        altitude = 44330 * (1 - (pressure / 101325) ** (1 / 5.255))
+        # Altitude from pressure (with safety check)
+        if pressure > 0:
+            ratio = pressure / 101325.0
+            altitude = 44330.0 * (1.0 - (ratio ** (1.0 / 5.255)))
+        else:
+            altitude = None
 
-        return {"pressure": pressure, "temp_c": temp_c, "altitude": altitude}
+        return {"pressure": float(pressure), "temp_c": temp_c, "altitude": altitude}
 
     # ─── Main poll loop ───────────────────────────
 

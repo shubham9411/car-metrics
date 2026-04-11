@@ -23,6 +23,7 @@ class CameraPoller:
         self._picam = None
         self._running = False
         self._burst_requested = False
+        self.obd_connected = False  # Set by main.py from OBD poller state
 
     def _init_camera(self):
         """Initialize picamera2 (system-installed)."""
@@ -31,13 +32,28 @@ class CameraPoller:
 
             self._picam = Picamera2()
             cam_config = self._picam.create_still_configuration(
-                main={"size": (config.CAMERA_WIDTH, config.CAMERA_HEIGHT)},
+                main={"size": (config.CAMERA_WIDTH, config.CAMERA_HEIGHT),
+                       "format": "RGB888"},
                 buffer_count=2,
             )
             self._picam.configure(cam_config)
+            self._picam.options["quality"] = config.CAMERA_JPEG_QUALITY
+
+            # Fix pink/green vignetting: enable AWB + let ISP settle
+            self._picam.set_controls({
+                "AwbEnable": True,
+                "AwbMode": 0,          # Auto white balance
+                "AeEnable": True,      # Auto exposure
+            })
+
             self._picam.start()
+
+            # Let AWB/AE converge before first capture (2 seconds)
+            import time as _t
+            _t.sleep(2)
+
             logger.info(
-                "Camera initialized: %dx%d @ JPEG q%d",
+                "Camera initialized: %dx%d @ JPEG q%d (AWB enabled)",
                 config.CAMERA_WIDTH,
                 config.CAMERA_HEIGHT,
                 config.CAMERA_JPEG_QUALITY,
@@ -62,16 +78,21 @@ class CameraPoller:
             return
 
         self._running = True
-        logger.info("Camera poller started (interval=%ds)", config.CAMERA_INTERVAL_SEC)
+        logger.info("Camera poller started (interval=%ds, requires OBD)", config.CAMERA_INTERVAL_SEC)
 
         while self._running:
             try:
+                # Burst captures always fire (crash events)
                 if self._burst_requested:
                     await self._do_burst()
                     self._burst_requested = False
-                else:
+                elif self.obd_connected:
+                    # Normal capture only when car is running
                     self._capture_frame(event_triggered=False)
                     await asyncio.sleep(config.CAMERA_INTERVAL_SEC)
+                else:
+                    # Car not running — sleep longer to save CPU
+                    await asyncio.sleep(5)
             except Exception as e:
                 logger.error("Camera capture error: %s", e)
                 await asyncio.sleep(5)
@@ -94,11 +115,7 @@ class CameraPoller:
 
         try:
             # Capture to temp file, then atomic rename
-            self._picam.capture_file(
-                tmp_path,
-                format="jpeg",
-                quality=config.CAMERA_JPEG_QUALITY,
-            )
+            self._picam.capture_file(tmp_path, format="jpeg")
             os.rename(tmp_path, filepath)
             db.insert_camera_frame(ts, filename, event_triggered)
             logger.debug("Captured: %s (event=%s)", filename, event_triggered)

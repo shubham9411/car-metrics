@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Car Metrics Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+
+<body>
+
+    <!-- Header -->
+    <header class="header">
+        <h1>
+            <span class="status-dot" id="statusDot"></span>
+            🚗 Car Metrics
+        </h1>
+        <div class="header-stats">
+            <span>Uptime: <span class="value" id="uptime">--</span></span>
+            <span>IMU: <span class="value" id="hdrImuCount">0</span></span>
+            <span>GPS: <span class="value" id="hdrGpsCount">0</span></span>
+            <span>Images: <span class="value" id="hdrImgCount">0</span></span>
+        </div>
+    </header>
+
+    <!-- Navigation -->
+    <nav class="nav">
+        <button class="active" data-page="dashboard">📊 Dashboard</button>
+        <button data-page="images">📷 Images</button>
+        <button data-page="gps">🛰️ GPS</button>
+        <button data-page="obd">🔧 OBD2</button>
+        <button data-page="events">⚠️ Events</button>
+    </nav>
+
+    <!-- Content -->
+    <main class="content">
+
+        <!-- Dashboard Page -->
+        <div class="page active" id="page-dashboard">
+            <!-- Stats Overview -->
+            <div class="stats-grid" id="statsGrid">
+                <div class="stat-card accent">
+                    <div class="label">G-Force</div>
+                    <div class="value" id="gForce">--</div>
+                    <div class="sub">Total magnitude</div>
+                </div>
+                <div class="stat-card success">
+                    <div class="label">Speed</div>
+                    <div class="value" id="speed">--<span class="unit">km/h</span></div>
+                    <div class="sub">GPS ground speed</div>
+                </div>
+                <div class="stat-card warning">
+                    <div class="label">Temperature</div>
+                    <div class="value" id="temp">--<span class="unit">°C</span></div>
+                    <div class="sub">BMP180 sensor</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Altitude</div>
+                    <div class="value" id="altitude">--<span class="unit">m</span></div>
+                    <div class="sub">Barometric</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Heading</div>
+                    <div class="value" id="heading">--<span class="unit">°</span></div>
+                    <div class="sub">GPS course / Mag</div>
+                </div>
+                <div class="stat-card danger">
+                    <div class="label">Events</div>
+                    <div class="value" id="eventCount">0</div>
+                    <div class="sub">High-G alerts</div>
+                </div>
+            </div>
+
+            <!-- G-Force Chart -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>📈 G-Force History</h2>
+                    <span style="color:var(--text-muted);font-size:0.8rem" id="chartInfo">--</span>
+                </div>
+                <div class="panel-body">
+                    <div class="chart-container">
+                        <canvas id="gforceChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- IMU Live Data -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>🎯 IMU — Accelerometer & Gyroscope</h2>
+                </div>
+                <div class="panel-body">
+                    <div class="data-grid">
+                        <div class="data-item">
+                            <div class="label">Accel X</div>
+                            <div class="value" id="ax">--</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">Accel Y</div>
+                            <div class="value" id="ay">--</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">Accel Z</div>
+                            <div class="value" id="az">--</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">Gyro X</div>
+                            <div class="value" id="gx">--</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">Gyro Y</div>
+                            <div class="value" id="gy">--</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">Gyro Z</div>
+                            <div class="value" id="gz">--</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">Mag X</div>
+                            <div class="value" id="mx">--</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">Mag Y</div>
+                            <div class="value" id="my">--</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">Mag Z</div>
+                            <div class="value" id="mz">--</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">Pressure</div>
+                            <div class="value" id="pressure">--</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Images Page -->
+        <div class="page" id="page-images">
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>📷 Camera Captures</h2>
+                    <span style="color:var(--text-muted);font-size:0.8rem" id="imgTotal">--</span>
+                </div>
+                <div class="panel-body">
+                    <div class="gallery" id="imageGallery"></div>
+                    <div id="imgEmpty" class="empty-state" style="display:none">
+                        <div class="icon">📷</div>
+                        <h3>No images yet</h3>
+                        <p>Camera captures will appear here</p>
+                    </div>
+                    <div style="text-align:center;margin-top:20px">
+                        <button id="loadMoreImages"
+                            style="background:var(--accent);color:white;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-size:0.85rem;display:none">Load
+                            More</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- GPS Page -->
+        <div class="page" id="page-gps">
+            <!-- Live Map -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>🗺️ Live Map</h2>
+                    <span style="color:var(--text-muted);font-size:0.8rem" id="mapInfo">--</span>
+                </div>
+                <div class="panel-body" style="padding:0">
+                    <div id="gpsMap" style="height:400px;border-radius:0 0 12px 12px"></div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>🛰️ GPS Position</h2>
+                </div>
+                <div class="panel-body">
+                    <div class="gps-coords">
+                        <div class="data-item">
+                            <div class="label">Latitude</div>
+                            <div class="value" id="gpsLat">--</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">Longitude</div>
+                            <div class="value" id="gpsLon">--</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">Altitude</div>
+                            <div class="value" id="gpsAlt">--</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">Speed</div>
+                            <div class="value" id="gpsSpeed">--</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">Course</div>
+                            <div class="value" id="gpsCourse">--</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="label">Satellites</div>
+                            <div class="value" id="gpsSats">--</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- GPS Track Table -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>📍 Recent GPS Fixes</h2>
+                </div>
+                <div class="panel-body" style="overflow-x:auto">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Lat</th>
+                                <th>Lon</th>
+                                <th>Alt</th>
+                                <th>Speed (kn)</th>
+                                <th>Sats</th>
+                            </tr>
+                        </thead>
+                        <tbody id="gpsTable"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- OBD Page -->
+        <div class="page" id="page-obd">
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>🔧 OBD2 — Engine Data</h2>
+                </div>
+                <div class="panel-body">
+                    <div class="data-grid" id="obdGrid">
+                        <div class="empty-state" id="obdEmpty">
+                            <div class="icon">🔧</div>
+                            <h3>No OBD2 data</h3>
+                            <p>Connect ELM327 to see engine data</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Events Page -->
+        <div class="page" id="page-events">
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>⚠️ Events & Alerts</h2>
+                </div>
+                <div class="panel-body">
+                    <ul class="events-list" id="eventsList"></ul>
+                    <div id="eventsEmpty" class="empty-state" style="display:none">
+                        <div class="icon">✅</div>
+                        <h3>No events recorded</h3>
+                        <p>High-G events will appear here</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Image Modal -->
+    <div class="modal-overlay" id="imageModal" onclick="this.classList.remove('active')">
+        <img id="modalImage" src="" alt="Full size">
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+
+</html>

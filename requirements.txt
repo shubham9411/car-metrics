@@ -1,4 +1,5 @@
 smbus2>=0.4.0
 pyserial>=3.5
 pynmea2>=1.19.0
-python-obd>=0.7.1
+bottle>=0.12
+# python-obd installed separately (needs build from git on Python 3.13/ARM)
