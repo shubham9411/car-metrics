@@ -40,6 +40,11 @@ def index():
     """Dashboard home page."""
     return static_file("index.html", root=os.path.join(WEB_DIR, "templates"))
 
+@app.route("/old-dashboard.html")
+def old_dashboard():
+    """Dashboard old page."""
+    return static_file("old-dashboard.html", root=os.path.join(WEB_DIR, "templates"))
+
 
 # ─── API: Latest Status ──────────────────────────
 
@@ -93,6 +98,29 @@ def api_status():
         "uptime_sec": uptime_sec,
         "server_ts": time.time(),
     }
+
+    # Spoof data if simulation mode is on
+    if os.path.exists(os.path.join(config.DATA_DIR, ".simulate_data")):
+        s_base = time.time() / 10
+        result["gps"] = {
+            "lat": 37.7749 + math.sin(s_base) * 0.01,
+            "lon": -122.4194 + math.cos(s_base) * 0.01,
+            "alt": 15 + math.sin(s_base * 2) * 5,
+            "speed_knots": 30 + math.sin(s_base * 5) * 10,
+            "course": (s_base * 50) % 360,
+            "satellites": 8
+        }
+        result["obd"] = {
+            "RPM": {"value": 2500 + int(math.sin(s_base * 4) * 1500), "unit": "rev/min"},
+            "SPEED": {"value": 55 + int(math.sin(s_base * 5) * 20), "unit": "kph"},
+            "ENGINE_LOAD": {"value": 45.0 + math.sin(s_base * 2) * 30, "unit": "%"},
+            "COOLANT_TEMP": {"value": 85 + int(math.sin(s_base / 2) * 10), "unit": "degC"}
+        }
+        if result["imu"]:
+            result["imu"]["pressure"] = 101325 + math.sin(s_base) * 500
+            result["imu"]["ax"] = math.sin(s_base * 8) * 0.1
+            result["imu"]["ay"] = math.cos(s_base * 8) * 0.1
+
     return json.dumps(result)
 
 
@@ -197,6 +225,58 @@ def api_gforce():
 
     response.content_type = "application/json"
     return json.dumps(points[::-1])  # oldest first for chart
+
+
+# ─── API: Settings (Camera override) ──────────────
+
+FORCE_CAM_FILE = os.path.join(config.DATA_DIR, ".force_camera")
+
+@app.route("/api/settings/force_camera", method=["GET", "POST"])
+def api_force_camera():
+    """Get or set the manual camera override toggle."""
+    if request.method == "POST":
+        try:
+            data = request.json or {}
+            enabled = bool(data.get("enabled", False))
+            if enabled:
+                open(FORCE_CAM_FILE, "w").close()
+            else:
+                if os.path.exists(FORCE_CAM_FILE):
+                    os.remove(FORCE_CAM_FILE)
+            return json.dumps({"status": "ok", "enabled": enabled})
+        except Exception as e:
+            response.status = 500
+            return json.dumps({"status": "error", "message": str(e)})
+
+    # GET
+    response.content_type = "application/json"
+    enabled = os.path.exists(FORCE_CAM_FILE)
+    return json.dumps({"enabled": enabled})
+
+
+SIM_DATA_FILE = os.path.join(config.DATA_DIR, ".simulate_data")
+
+@app.route("/api/settings/simulate_data", method=["GET", "POST"])
+def api_simulate_data():
+    """Get or set the data simulation override toggle."""
+    if request.method == "POST":
+        try:
+            data = request.json or {}
+            enabled = bool(data.get("enabled", False))
+            if enabled:
+                open(SIM_DATA_FILE, "w").close()
+            else:
+                if os.path.exists(SIM_DATA_FILE):
+                    os.remove(SIM_DATA_FILE)
+            return json.dumps({"status": "ok", "enabled": enabled})
+        except Exception as e:
+            response.status = 500
+            return json.dumps({"status": "error", "message": str(e)})
+
+    # GET
+    response.content_type = "application/json"
+    enabled = os.path.exists(SIM_DATA_FILE)
+    return json.dumps({"enabled": enabled})
 
 
 # ─── Static files ─────────────────────────────────

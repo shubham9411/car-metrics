@@ -78,20 +78,23 @@ class CameraPoller:
             return
 
         self._running = True
-        logger.info("Camera poller started (interval=%ds, requires OBD)", config.CAMERA_INTERVAL_SEC)
+        logger.info("Camera poller started (interval=%ds, requires OBD or force file)", config.CAMERA_INTERVAL_SEC)
 
         while self._running:
             try:
+                force_file = os.path.join(config.DATA_DIR, ".force_camera")
+                force_enabled = os.path.exists(force_file)
+
                 # Burst captures always fire (crash events)
                 if self._burst_requested:
                     await self._do_burst()
                     self._burst_requested = False
-                elif self.obd_connected:
-                    # Normal capture only when car is running
+                elif self.obd_connected or force_enabled:
+                    # Normal capture when car is running OR manual override is on
                     self._capture_frame(event_triggered=False)
                     await asyncio.sleep(config.CAMERA_INTERVAL_SEC)
                 else:
-                    # Car not running — sleep longer to save CPU
+                    # Car not running and override off — sleep longer to save CPU
                     await asyncio.sleep(5)
             except Exception as e:
                 logger.error("Camera capture error: %s", e)

@@ -10,11 +10,9 @@ let imgPage = 0;
 
 // ─── Tab Navigation ─────────────────────────────
 
-const el = id => document.getElementById(id) || { textContent: '', innerHTML: '', style: {} };
-
-document.querySelectorAll('.nav-btn').forEach(btn => {
+document.querySelectorAll('.nav button').forEach(btn => {
     btn.addEventListener('click', () => {
-        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         currentPage = btn.dataset.page;
         document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -69,7 +67,7 @@ function updateDashboard(d) {
         el('mx').textContent = imu.mx != null ? num(imu.mx) : '--';
         el('my').textContent = imu.my != null ? num(imu.my) : '--';
         el('mz').textContent = imu.mz != null ? num(imu.mz) : '--';
-        el('pressure').textContent = imu.pressure != null ? (imu.pressure / 100000).toFixed(3) + ' bar' : '--';
+        el('pressure').textContent = imu.pressure != null ? Math.round(imu.pressure) + ' Pa' : '--';
         el('temp').innerHTML = imu.temp_c != null ? num(imu.temp_c) + '<span class="unit">°C</span>' : '--';
         el('altitude').innerHTML = imu.altitude != null ? Math.round(imu.altitude) + '<span class="unit">m</span>' : '--';
 
@@ -116,98 +114,78 @@ function updateDashboard(d) {
     el('eventCount').textContent = d.counts.events;
 }
 
-// ─── G-Force Chart (Chart.js) ──────────────────────────────
+// ─── G-Force Chart ──────────────────────────────
 
 let gforceData = [];
-let chartInstance = null;
 
 async function loadGforceChart() {
     try {
-        const res = await fetch('/api/gforce?limit=150');
+        const res = await fetch('/api/gforce?limit=300');
         gforceData = await res.json();
-
+        drawChart();
         el('chartInfo').textContent = gforceData.length + ' points';
-        initOrUpdateChart();
-    } catch (e) {
-        console.error("Failed to load chart", e);
-    }
+    } catch (e) { }
 }
 
-function initOrUpdateChart() {
+function drawChart() {
     const canvas = el('gforceChart');
-    if (!canvas) return;
     const ctx = canvas.getContext('2d');
+    const rect = canvas.parentElement.getBoundingClientRect();
+    canvas.width = rect.width * (window.devicePixelRatio || 1);
+    canvas.height = rect.height * (window.devicePixelRatio || 1);
+    ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+    const w = rect.width, h = rect.height;
 
-    // Convert DB timestamps & G values for Chart.js
-    const labels = gforceData.map(d => {
-        let date = new Date(d.ts * 1000);
-        return date.toLocaleTimeString([], { minute: '2-digit', second: '2-digit' });
-    });
-    const datasets = gforceData.map(d => parseFloat(d.g));
+    ctx.clearRect(0, 0, w, h);
 
-    if (chartInstance) {
-        chartInstance.data.labels = labels;
-        chartInstance.data.datasets[0].data = datasets;
-        chartInstance.update('none'); // Update without animation so it doesn't bounce constantly
-        return;
+    if (gforceData.length < 2) return;
+
+    const vals = gforceData.map(p => p.g);
+    const maxG = Math.max(...vals, 2);
+    const minG = Math.min(...vals, 0);
+    const range = maxG - minG || 1;
+
+    // Threshold line
+    const threshY = h - ((2.5 - minG) / range) * (h - 20) - 10;
+    ctx.strokeStyle = '#ef444460';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(0, threshY);
+    ctx.lineTo(w, threshY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ef444480';
+    ctx.font = '10px Inter';
+    ctx.fillText('2.5g threshold', 4, threshY - 4);
+
+    // Chart line
+    const gradient = ctx.createLinearGradient(0, 0, 0, h);
+    gradient.addColorStop(0, '#3b82f6');
+    gradient.addColorStop(1, '#8b5cf6');
+
+    ctx.strokeStyle = gradient;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 0; i < vals.length; i++) {
+        const x = (i / (vals.length - 1)) * w;
+        const y = h - ((vals[i] - minG) / range) * (h - 20) - 10;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     }
+    ctx.stroke();
 
-    // Gradient fill
-    let gradient = ctx.createLinearGradient(0, 0, 0, 300);
-    gradient.addColorStop(0, 'rgba(56, 189, 248, 0.4)');
-    gradient.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
-
-    chartInstance = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'G-Force',
-                data: datasets,
-                borderColor: '#38bdf8',
-                backgroundColor: gradient,
-                borderWidth: 2,
-                pointRadius: 0,
-                pointHitRadius: 10,
-                fill: true,
-                tension: 0.4  // smooth curves
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            animation: false,
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    mode: 'index',
-                    intersect: false,
-                    backgroundColor: 'rgba(17, 24, 39, 0.9)',
-                    titleColor: '#fff',
-                    bodyColor: '#38bdf8',
-                    bodyFont: { family: "'JetBrains Mono', monospace", size: 14 }
-                }
-            },
-            interaction: {
-                mode: 'nearest',
-                axis: 'x',
-                intersect: false
-            },
-            scales: {
-                x: {
-                    grid: { display: false },
-                    ticks: { maxTicksLimit: 8, color: '#94a3b8' }
-                },
-                y: {
-                    grid: { color: 'rgba(255,255,255,0.05)' },
-                    ticks: { color: '#94a3b8' },
-                    min: 0,
-                    suggestedMax: 3
-                }
-            }
-        }
-    });
+    // Fill under line
+    const fillGrad = ctx.createLinearGradient(0, 0, 0, h);
+    fillGrad.addColorStop(0, '#3b82f620');
+    fillGrad.addColorStop(1, '#3b82f602');
+    ctx.lineTo(w, h);
+    ctx.lineTo(0, h);
+    ctx.closePath();
+    ctx.fillStyle = fillGrad;
+    ctx.fill();
 }
+
+window.addEventListener('resize', drawChart);
 
 // ─── Images ─────────────────────────────────────
 
@@ -244,32 +222,12 @@ async function loadImages(reset = false) {
     } catch (e) { }
 }
 
-el('loadMoreImages')?.addEventListener('click', () => { imgPage++; loadImages(false); });
+el('loadMoreImages').addEventListener('click', () => { imgPage++; loadImages(false); });
 
 function openModal(src) {
     el('modalImage').src = src;
-    const modal = el('imageModal');
-    modal.style.display = 'flex';
-    modal.onclick = () => { modal.style.display = 'none'; };
+    el('imageModal').classList.add('active');
 }
-
-// Fetch initial force-camera state
-fetch('/api/settings/force_camera')
-    .then(r => r.json())
-    .then(d => { if (el('forceCameraToggle')) el('forceCameraToggle').checked = d.enabled; })
-    .catch(e => console.error(e));
-
-el('forceCameraToggle')?.addEventListener('change', async (e) => {
-    try {
-        await fetch('/api/settings/force_camera', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: e.target.checked })
-        });
-    } catch (err) {
-        console.error('Failed to save camera setting');
-    }
-});
 
 // ─── GPS Map & Table ────────────────────────────
 
@@ -346,10 +304,7 @@ async function loadGpsTrack() {
 
 async function loadGps() {
     // Init map on first visit to GPS tab
-    setTimeout(() => {
-        initMap();
-        if (gpsMap) gpsMap.invalidateSize();
-    }, 100);
+    setTimeout(initMap, 100);
 
     try {
         const res = await fetch('/api/gps?limit=50');
@@ -412,6 +367,7 @@ async function loadEvents() {
 
 // ─── Helpers ────────────────────────────────────
 
+function el(id) { return document.getElementById(id); }
 function num(v) { return v != null ? (typeof v === 'number' ? v.toFixed(2) : v) : '--'; }
 function fmt(n) {
     if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
@@ -431,33 +387,3 @@ setInterval(() => {
 setInterval(() => {
     if (currentPage === 'images') loadImages(true);
 }, IMG_REFRESH_MS);
-
-// ─── Toggles & Overrides ────────────────────────
-
-// Force Camera state
-fetch('/api/settings/force_camera')
-    .then(r => r.json())
-    .then(d => { if (el('forceCameraToggle')) el('forceCameraToggle').checked = d.enabled; });
-
-el('forceCameraToggle')?.addEventListener('change', () => {
-    const enabled = el('forceCameraToggle').checked;
-    fetch('/api/settings/force_camera', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled })
-    });
-});
-
-// Simulate Data state
-fetch('/api/settings/simulate_data')
-    .then(r => r.json())
-    .then(d => { if (el('simulateDataToggle')) el('simulateDataToggle').checked = d.enabled; });
-
-el('simulateDataToggle')?.addEventListener('change', () => {
-    const enabled = el('simulateDataToggle').checked;
-    fetch('/api/settings/simulate_data', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled })
-    });
-});
