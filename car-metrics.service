@@ -1,0 +1,24 @@
+[Unit]
+Description=Car Metrics Telemetry Daemon
+After=network.target bluetooth.target
+
+[Service]
+Type=simple
+User=dietpi
+Group=dietpi
+WorkingDirectory=/home/dietpi/car-metrics
+ExecStart=/usr/bin/python3 /home/dietpi/car-metrics/main.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Environment overrides (uncomment and edit as needed)
+# Environment=CM_DATA_DIR=/home/dietpi/car-metrics-data
+# Environment=CM_LOG_LEVEL=DEBUG
+# Environment=CM_SYNC_ENABLED=true
+# Environment=CM_SUPABASE_URL=https://xxx.supabase.co
+# Environment=CM_SUPABASE_KEY=your-key
+
+[Install]
+WantedBy=multi-user.target
