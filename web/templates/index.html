@@ -769,6 +769,65 @@
             </div>
 
         </main>
+
+        <!-- Trip Drilldown Modal -->
+        <div id="tripDrilldown"
+            style="display:none; position:fixed; inset:0; z-index:9998; background:rgba(0,0,0,0.85); backdrop-filter:blur(8px); overflow-y:auto;">
+            <div style="max-width:1100px; margin:30px auto; padding:0 20px;">
+                <!-- Header -->
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                    <div>
+                        <h2 style="color:var(--text-pure); margin:0; font-family:var(--font-display);"
+                            id="tripDrillTitle">Trip #--</h2>
+                        <p style="color:var(--text-dim); margin:4px 0 0 0;" id="tripDrillSummary">--</p>
+                    </div>
+                    <button onclick="closeTripDrilldown()"
+                        style="background:rgba(255,255,255,0.1); border:1px solid var(--border); color:var(--text-pure); padding:10px 20px; border-radius:10px; cursor:pointer; font-size:0.9rem;">
+                        ✕ Close
+                    </button>
+                </div>
+
+                <!-- Score + Stats -->
+                <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:12px; margin-bottom:20px;">
+                    <div class="widget glass">
+                        <div class="widget-title">Driver Score</div>
+                        <div class="widget-value" id="tripDrillScore">--</div>
+                    </div>
+                    <div class="widget glass">
+                        <div class="widget-title">Duration</div>
+                        <div class="widget-value" id="tripDrillDuration" style="font-size:1.5rem">--</div>
+                    </div>
+                    <div class="widget glass">
+                        <div class="widget-title">Max Speed</div>
+                        <div class="widget-value" id="tripDrillMaxSpeed" style="font-size:1.5rem">--</div>
+                    </div>
+                    <div class="widget glass">
+                        <div class="widget-title">Events</div>
+                        <div class="widget-value" id="tripDrillEvents" style="font-size:1.5rem">0</div>
+                    </div>
+                </div>
+
+                <!-- Gradient Map -->
+                <div class="panel glass">
+                    <div class="panel-header">
+                        <div class="panel-title">Route Map (Speed Gradient)</div>
+                    </div>
+                    <div id="tripDrillMap"
+                        style="height:400px; width:100%; border-radius:12px; background:#000; border:1px solid var(--border);">
+                    </div>
+                </div>
+
+                <!-- Speed + Elevation Chart -->
+                <div class="panel glass" style="margin-top:16px;">
+                    <div class="panel-header">
+                        <div class="panel-title">Speed & Elevation Profile</div>
+                    </div>
+                    <div class="chart-wrap" style="height:250px;">
+                        <canvas id="tripDrillChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Use query params to brutally bust cache every single time for development -->

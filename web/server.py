@@ -194,26 +194,80 @@ def api_trips():
 @app.route("/api/routes")
 def api_routes():
     """Get downsampled route tracks for Fog of War map mapping."""
-    # We fetch ALL points ordered by ts ascending, so line logic connects correctly
     conn = db.get_connection()
     try:
         rows = conn.execute(
             "SELECT trip_id, lat, lon FROM trip_routes ORDER BY ts ASC"
         ).fetchall()
-        
-        # Group by trip_id so we can draw separate polylines properly!
+
         trips = {}
         for r in rows:
             tid = r["trip_id"]
             if tid not in trips:
                 trips[tid] = []
             trips[tid].append([r["lat"], r["lon"]])
-            
+
         response.content_type = "application/json"
         return json.dumps(list(trips.values()))
     except Exception as e:
         logger.error(f"Error fetching routes: {e}")
         response.content_type = "application/json"
+        return "[]"
+
+
+@app.route("/api/trips/<trip_id:int>")
+def api_trip_detail(trip_id):
+    """Get full drilldown data for a single trip: summary, enriched route, events."""
+    conn = db.get_connection()
+    response.content_type = "application/json"
+
+    try:
+        # Trip summary
+        trip = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
+        if not trip:
+            response.status = 404
+            return json.dumps({"error": "Trip not found"})
+
+        trip_data = _row_to_dict(trip)
+
+        # Route with speed/alt/course for gradient maps
+        route_rows = conn.execute(
+            "SELECT ts, lat, lon, speed, alt, course FROM trip_routes WHERE trip_id=? ORDER BY ts ASC",
+            (trip_id,)
+        ).fetchall()
+        route = [_row_to_dict(r) for r in route_rows]
+
+        # Events that happened during this trip's timeframe
+        events = []
+        if trip_data.get("start_ts"):
+            end_ts = trip_data.get("end_ts") or time.time()
+            ev_rows = conn.execute(
+                "SELECT * FROM events WHERE ts >= ? AND ts <= ? ORDER BY ts ASC",
+                (trip_data["start_ts"], end_ts)
+            ).fetchall()
+            events = [_row_to_dict(r) for r in ev_rows]
+
+        return json.dumps({
+            "trip": trip_data,
+            "route": route,
+            "events": events,
+        })
+    except Exception as e:
+        logger.error(f"Error fetching trip {trip_id}: {e}")
+        return json.dumps({"error": str(e)})
+
+
+@app.route("/api/intersections")
+def api_intersections():
+    """Get all detected intersections (for Global Map overlay)."""
+    conn = db.get_connection()
+    response.content_type = "application/json"
+    try:
+        rows = conn.execute(
+            "SELECT * FROM intersections ORDER BY trip_count DESC"
+        ).fetchall()
+        return json.dumps([_row_to_dict(r) for r in rows])
+    except Exception:
         return "[]"
 
 

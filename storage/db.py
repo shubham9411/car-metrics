@@ -114,7 +114,19 @@ def _init_schema(conn: sqlite3.Connection):
             ts REAL NOT NULL,
             lat REAL,
             lon REAL,
+            speed REAL,
+            alt REAL,
+            course REAL,
             synced INTEGER DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS intersections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lat REAL NOT NULL,
+            lon REAL NOT NULL,
+            detection_type TEXT,
+            first_seen_ts REAL,
+            trip_count INTEGER DEFAULT 1
         );
 
         CREATE TABLE IF NOT EXISTS sync_cursor (
@@ -139,6 +151,14 @@ def _init_schema(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE trips ADD COLUMN score INTEGER DEFAULT 100")
     except sqlite3.OperationalError:
         pass
+
+    # Phase 5 migrations: enrich trip_routes
+    for col, default in [("speed", "NULL"), ("alt", "NULL"), ("course", "NULL")]:
+        try:
+            conn.execute(f"ALTER TABLE trip_routes ADD COLUMN {col} REAL DEFAULT {default}")
+        except sqlite3.OperationalError:
+            pass
+
     conn.commit()
 
 

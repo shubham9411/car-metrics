@@ -400,18 +400,22 @@ async function loadTrips() {
             const duration = trip.end_ts ? Math.round((trip.end_ts - trip.start_ts) / 60) : Math.round((Date.now() / 1000 - trip.start_ts) / 60);
             const statusLabel = trip.end_ts ? "Completed" : "<span style='color:var(--accent); font-weight:bold;'>Active</span>";
 
-            // Format score to 1 decimal with color
-            const rawScore = trip.driver_score ?? 100;
+            const rawScore = trip.score ?? 100;
             const scoreColor = rawScore >= 95 ? "#34d399" : rawScore >= 80 ? "#fbbf24" : "#ef4444";
 
             const tr = document.createElement('tr');
             tr.style.borderBottom = "1px solid var(--border)";
+            tr.style.cursor = "pointer";
+            tr.style.transition = "background 0.2s";
+            tr.onmouseover = () => tr.style.background = "rgba(255,255,255,0.03)";
+            tr.onmouseout = () => tr.style.background = "";
+            tr.onclick = () => openTripDrilldown(trip.id);
             tr.innerHTML = `
                 <td style="padding:12px; font-family:var(--font-data)">#${trip.id}</td>
                 <td style="padding:12px;">${startDate.toLocaleString()}</td>
                 <td style="padding:12px;">${duration} min · ${statusLabel}</td>
                 <td style="padding:12px;">
-                    <div style="font-weight:600; color:${scoreColor}">${rawScore.toFixed(1)} <span style="font-size:0.75rem; opacity:0.6; font-weight:normal">/100</span></div>
+                    <div style="font-weight:600; color:${scoreColor}">${typeof rawScore === 'number' ? rawScore.toFixed(1) : rawScore} <span style="font-size:0.75rem; opacity:0.6; font-weight:normal">/100</span></div>
                 </td>
             `;
             tbody.appendChild(tr);
@@ -420,6 +424,120 @@ async function loadTrips() {
         console.error("Trips load error:", e);
     }
 }
+
+// ─── Trip Drilldown ─────────────────────────────
+
+let tripDrillMap = null;
+let tripDrillChart = null;
+
+function closeTripDrilldown() {
+    document.getElementById('tripDrilldown').style.display = 'none';
+    if (tripDrillMap) { tripDrillMap.remove(); tripDrillMap = null; }
+    if (tripDrillChart) { tripDrillChart.destroy(); tripDrillChart = null; }
+}
+
+function speedToColor(speed) {
+    if (speed == null) return '#6366f1';
+    if (speed > 35) return '#34d399';
+    if (speed > 10) return '#fbbf24';
+    return '#ef4444';
+}
+
+async function openTripDrilldown(tripId) {
+    document.getElementById('tripDrilldown').style.display = 'block';
+    el('tripDrillTitle').textContent = `Trip #${tripId}`;
+    el('tripDrillSummary').textContent = 'Loading...';
+
+    try {
+        const res = await fetch(`/api/trips/${tripId}`);
+        const data = await res.json();
+        if (data.error) { el('tripDrillSummary').textContent = data.error; return; }
+
+        const { trip, route, events } = data;
+
+        // Summary stats
+        const startDate = new Date(trip.start_ts * 1000);
+        const duration = trip.end_ts ? Math.round((trip.end_ts - trip.start_ts) / 60) : Math.round((Date.now() / 1000 - trip.start_ts) / 60);
+        const maxSpeed = route.reduce((max, p) => Math.max(max, p.speed || 0), 0);
+        const score = trip.score ?? 100;
+        const scoreColor = score >= 95 ? '#34d399' : score >= 80 ? '#fbbf24' : '#ef4444';
+
+        el('tripDrillSummary').textContent = `Started ${startDate.toLocaleString()} · ${trip.end_ts ? 'Completed' : 'Active'}`;
+        el('tripDrillScore').innerHTML = `<span style="color:${scoreColor}">${score}</span>`;
+        el('tripDrillDuration').textContent = `${duration} min`;
+        el('tripDrillMaxSpeed').textContent = `${maxSpeed.toFixed(0)} kph`;
+        el('tripDrillEvents').textContent = events.length;
+
+        // Map: gradient polyline
+        if (tripDrillMap) { tripDrillMap.remove(); tripDrillMap = null; }
+
+        setTimeout(() => {
+            tripDrillMap = L.map('tripDrillMap', { zoomControl: true, attributionControl: false }).setView([20, 78], 5);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19, subdomains: 'abcd' }).addTo(tripDrillMap);
+
+            if (route.length > 1) {
+                for (let i = 0; i < route.length - 1; i++) {
+                    const p1 = route[i], p2 = route[i + 1];
+                    L.polyline([[p1.lat, p1.lon], [p2.lat, p2.lon]], { color: speedToColor(p2.speed), weight: 4, opacity: 0.9 }).addTo(tripDrillMap);
+                }
+                tripDrillMap.fitBounds(route.map(p => [p.lat, p.lon]), { padding: [30, 30], maxZoom: 16 });
+
+                // Start / End markers
+                const mkIcon = (bg) => L.divIcon({ className: '', html: `<div style="width:12px;height:12px;background:${bg};border:2px solid #fff;border-radius:50%;box-shadow:0 0 8px ${bg}80"></div>`, iconSize: [12, 12], iconAnchor: [6, 6] });
+                L.marker([route[0].lat, route[0].lon], { icon: mkIcon('#34d399') }).addTo(tripDrillMap).bindTooltip('Start');
+                L.marker([route[route.length - 1].lat, route[route.length - 1].lon], { icon: mkIcon('#ef4444') }).addTo(tripDrillMap).bindTooltip('End');
+
+                // Event markers
+                for (const ev of events) {
+                    if (ev.lat && ev.lon) {
+                        const evIcon = L.divIcon({ className: '', html: '<div style="width:20px;height:20px;background:#ef4444;border:2px solid #fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;font-weight:bold;box-shadow:0 0 12px #ef444480">⚠</div>', iconSize: [20, 20], iconAnchor: [10, 10] });
+                        L.marker([ev.lat, ev.lon], { icon: evIcon }).addTo(tripDrillMap).bindTooltip(`${ev.event_type} — ${(ev.g_force || 0).toFixed(1)}g`);
+                    }
+                }
+
+                // Peak/Valley elevation markers
+                const withAlt = route.filter(p => p.alt != null);
+                if (withAlt.length > 0) {
+                    const peak = withAlt.reduce((a, b) => a.alt > b.alt ? a : b);
+                    const valley = withAlt.reduce((a, b) => a.alt < b.alt ? a : b);
+                    const mkAltIcon = (ch, bg) => L.divIcon({ className: '', html: `<div style="width:18px;height:18px;background:${bg};border:2px solid #fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff">${ch}</div>`, iconSize: [18, 18], iconAnchor: [9, 9] });
+                    L.marker([peak.lat, peak.lon], { icon: mkAltIcon('▲', '#6366f1') }).addTo(tripDrillMap).bindTooltip(`Peak: ${peak.alt.toFixed(0)}m`);
+                    L.marker([valley.lat, valley.lon], { icon: mkAltIcon('▼', '#818cf8') }).addTo(tripDrillMap).bindTooltip(`Low: ${valley.alt.toFixed(0)}m`);
+                }
+            }
+            tripDrillMap.invalidateSize();
+        }, 150);
+
+        // Chart: Speed + Elevation dual-axis
+        if (tripDrillChart) { tripDrillChart.destroy(); tripDrillChart = null; }
+        const labels = route.map(p => new Date(p.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        const ctx = document.getElementById('tripDrillChart').getContext('2d');
+        tripDrillChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    { label: 'Speed (kph)', data: route.map(p => p.speed ?? 0), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', borderWidth: 2, tension: 0.3, fill: false, yAxisID: 'y', pointRadius: 0 },
+                    { label: 'Elevation (m)', data: route.map(p => p.alt ?? 0), borderColor: 'rgba(99,102,241,0.5)', backgroundColor: 'rgba(99,102,241,0.15)', borderWidth: 1, tension: 0.3, fill: true, yAxisID: 'y1', pointRadius: 0 },
+                ],
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { labels: { color: '#aaa', font: { size: 11 } } } },
+                scales: {
+                    x: { ticks: { color: '#666', maxTicksLimit: 10 }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                    y: { position: 'left', title: { display: true, text: 'Speed (kph)', color: '#3b82f6' }, ticks: { color: '#3b82f6' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                    y1: { position: 'right', title: { display: true, text: 'Elevation (m)', color: '#6366f1' }, ticks: { color: '#6366f1' }, grid: { drawOnChartArea: false } },
+                },
+            },
+        });
+    } catch (e) {
+        console.error("Trip drilldown error:", e);
+        el('tripDrillSummary').textContent = 'Error loading trip data.';
+    }
+}
+
 
 // ─── Events ─────────────────────────────────────
 
