@@ -7,6 +7,7 @@ import asyncio
 import logging
 import math
 import os
+import random
 import time
 
 import config
@@ -18,10 +19,11 @@ logger = logging.getLogger("pollers.obd")
 class OBDPoller:
     """Async OBD2 poller using python-obd's Async class."""
 
-    def __init__(self):
+    def __init__(self, gps_poller=None):
         self._connection = None
         self._running = False
         self._latest_values = {}  # pid -> {value, unit, ts}
+        self.gps = gps_poller
 
     @property
     def latest(self) -> dict:
@@ -31,8 +33,12 @@ class OBDPoller:
     def get_rpm(self) -> float:
         # Faked RPM injected directly into logic if mock enabled
         sim_file = os.path.join(config.DATA_DIR, ".simulate_data")
-        if os.path.exists(sim_file):
-            return 2500.0 + math.sin(time.time() / 10.0) * 1500.0
+        if os.path.exists(sim_file) and self.gps:
+            fix = self.gps.last_fix
+            speed = fix["speed_knots"] * 1.852 if fix else 0.0
+            # Base RPM on speed + some noise
+            base_rpm = 800.0 + (speed * 60) # Simple linear relation for simulation
+            return base_rpm + random.uniform(-50, 50)
             
         val = self._latest_values.get("RPM")
         return val["value"] if val else 0.0

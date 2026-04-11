@@ -775,7 +775,7 @@
             style="display:none; position:fixed; inset:0; z-index:9998; background:rgba(0,0,0,0.85); backdrop-filter:blur(8px); overflow-y:auto;">
             <div style="max-width:1100px; margin:30px auto; padding:0 20px;">
                 <!-- Header -->
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
                     <div>
                         <h2 style="color:var(--text-pure); margin:0; font-family:var(--font-display);"
                             id="tripDrillTitle">Trip #--</h2>
@@ -787,8 +787,19 @@
                     </button>
                 </div>
 
-                <!-- Score + Stats -->
-                <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:12px; margin-bottom:20px;">
+                <!-- Address Bar: Start → End -->
+                <div class="panel glass" style="margin-bottom:16px; padding:14px 20px;">
+                    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                        <span style="color:#34d399; font-size:1.1rem;">📍</span>
+                        <span id="tripDrillStartAddr" style="color:var(--text-main); font-size:0.85rem;">--</span>
+                        <span style="color:var(--text-dim); font-size:0.85rem;">→</span>
+                        <span style="color:#ef4444; font-size:1.1rem;">📍</span>
+                        <span id="tripDrillEndAddr" style="color:var(--text-main); font-size:0.85rem;">--</span>
+                    </div>
+                </div>
+
+                <!-- Stats Grid: Score, Duration, Avg Speed, Max Speed, Distance -->
+                <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:12px; margin-bottom:16px;">
                     <div class="widget glass">
                         <div class="widget-title">Driver Score</div>
                         <div class="widget-value" id="tripDrillScore">--</div>
@@ -798,12 +809,26 @@
                         <div class="widget-value" id="tripDrillDuration" style="font-size:1.5rem">--</div>
                     </div>
                     <div class="widget glass">
+                        <div class="widget-title">Avg Speed</div>
+                        <div class="widget-value" id="tripDrillAvgSpeed" style="font-size:1.5rem">--</div>
+                    </div>
+                    <div class="widget glass">
                         <div class="widget-title">Max Speed</div>
                         <div class="widget-value" id="tripDrillMaxSpeed" style="font-size:1.5rem">--</div>
                     </div>
                     <div class="widget glass">
-                        <div class="widget-title">Events</div>
-                        <div class="widget-value" id="tripDrillEvents" style="font-size:1.5rem">0</div>
+                        <div class="widget-title">Distance</div>
+                        <div class="widget-value" id="tripDrillDistance" style="font-size:1.5rem">--</div>
+                    </div>
+                </div>
+
+                <!-- Event Breakdown Pills -->
+                <div class="panel glass" style="margin-bottom:16px; padding:14px 20px;">
+                    <div class="panel-header" style="margin-bottom:8px;">
+                        <div class="panel-title">Events</div>
+                    </div>
+                    <div id="tripDrillEventPills" style="display:flex; gap:10px; flex-wrap:wrap;">
+                        <span style="color:var(--text-dim); font-size:0.85rem;">No events</span>
                     </div>
                 </div>
 

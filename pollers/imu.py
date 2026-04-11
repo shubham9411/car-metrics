@@ -7,6 +7,8 @@ via I2C using smbus2. Polls at 10Hz, batch-inserts to SQLite.
 import asyncio
 import logging
 import math
+import os
+import random
 import struct
 import time
 
@@ -50,16 +52,26 @@ _QMC_SCALE = 12000.0  # LSb/Gauss at 8G range
 class IMUPoller:
     """Async poller for the GY-87 10DOF sensor module."""
 
-    def __init__(self):
+    def __init__(self, gps_poller=None):
         self._bus = None
         self._bmp_cal = None
         self._batch = []
         self._running = False
         self._mag_type = None  # 'hmc', 'qmc', or None
         self._mag_addr = None
+        self.gps = gps_poller
+        
+        # State for IMU simulation
+        self._last_sim_speed = 0.0
+        self._last_sim_course = 0.0
 
     def _init_hardware(self):
         """Initialize I2C bus and configure sensors."""
+        sim_file = os.path.join(config.DATA_DIR, ".simulate_data")
+        if os.path.exists(sim_file):
+            logger.info("IMU hardware bypassed for simulation")
+            return
+
         from smbus2 import SMBus
 
         self._bus = SMBus(config.I2C_BUS)
@@ -235,6 +247,44 @@ class IMUPoller:
 
     def read_once(self) -> dict:
         """Read all sensors once. Returns combined dict."""
+        sim_file = os.path.join(config.DATA_DIR, ".simulate_data")
+        if os.path.exists(sim_file) and self.gps:
+            t = time.time()
+            fix = self.gps.last_fix
+            speed = (fix["speed_knots"] * 1.852) if (fix and fix.get("speed_knots") is not None) else 0.0
+            course = fix["course"] if (fix and fix.get("course") is not None) else 0.0
+            alt = fix["alt"] if (fix and fix.get("alt") is not None) else 15.0
+            
+            # Simulate Accel (Gs)
+            
+            # Longitudinal G (acceleration/braking)
+            accel_val = (speed - self._last_sim_speed) * 0.5
+            ax = -accel_val + random.uniform(-0.02, 0.02)
+            
+            # Lateral G (cornering)
+            course_delta = course - self._last_sim_course
+            if course_delta > 180: course_delta -= 360
+            if course_delta < -180: course_delta += 360
+            ay = (course_delta * 0.1) * (speed / 50.0) + random.uniform(-0.02, 0.02)
+            
+            # Vertical G (gravity + bumps + potholes)
+            az = 1.0 + random.uniform(-0.05, 0.05)
+            if random.random() < 0.02: # 2% chance of pothole
+                az += random.uniform(0.5, 1.2)
+            
+            self._last_sim_speed = speed
+            self._last_sim_course = course
+            
+            return {
+                "ts": t,
+                "ax": ax, "ay": ay, "az": az,
+                "gx": random.uniform(-1, 1), "gy": random.uniform(-1, 1), "gz": random.uniform(-1, 1),
+                "mx": math.cos(math.radians(course)), "my": math.sin(math.radians(course)), "mz": 0.0,
+                "pressure": 101325.0 - (alt * 12.0),
+                "temp_c": 22.0 + random.uniform(-0.5, 0.5),
+                "altitude": alt
+            }
+
         reading = {"ts": time.time()}
         reading.update(self._read_accel_gyro())
         reading.update(self._read_magnetometer())

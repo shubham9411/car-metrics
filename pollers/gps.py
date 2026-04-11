@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import os
+import random
 import time
 import urllib.request
 
@@ -116,19 +117,45 @@ class GPSPoller:
         logger.info("GPS poller started")
 
         sim_file = os.path.join(config.DATA_DIR, ".simulate_data")
+        
+        # State for advanced simulation
+        sim_lat = 37.7749
+        sim_lon = -122.4194
+        sim_heading = 0.0
+        sim_speed_knots = 0.0
+        sim_alt = 15.0
 
         while self._running:
             try:
                 if os.path.exists(sim_file):
-                    # Emulate moving in a circle around San Francisco
                     t = time.time()
-                    lat = 37.7749 + math.sin(t / 20) * 0.01
-                    lon = -122.4194 + math.cos(t / 20) * 0.01
+                    
+                    # Random road decisions: occasionally turn 90 degrees
+                    if time.time() % 30 < 1.0: # Every ~30s maybe turn
+                         decision = random.choice([0, 90, -90])
+                         sim_heading = (sim_heading + decision) % 360
+                    
+                    # Target speed varies (0 to 60 kph)
+                    target_speed = 30.0 + math.sin(t / 20) * 20.0
+                    # Braking events (sudden drops)
+                    if (t % 45) < 3.0: target_speed = 0.0
+                    
+                    # Accelerate/Brake towards target
+                    sim_speed_knots = sim_speed_knots * 0.9 + (target_speed / 1.852) * 0.1
+                    
+                    # Move vehicle (1 knot = 1.852 km/h ≈ 0.514 m/s)
+                    dist_m = (sim_speed_knots * 0.514) * 1.0 # 1s poll
+                    rad = math.radians(sim_heading)
+                    sim_lat += (dist_m * math.cos(rad)) / 111000.0
+                    sim_lon += (dist_m * math.sin(rad)) / (111000.0 * math.cos(math.radians(sim_lat)))
+                    
+                    # Change altitude gradually
+                    sim_alt += math.sin(t / 50) * 0.2
                     
                     fix = {
-                        "ts": t, "lat": lat, "lon": lon, "alt": 15.0,
-                        "speed_knots": 25.0 + math.sin(t / 10) * 15.0, "course": 90.0,
-                        "satellites": 8, "fix_quality": 1
+                        "ts": t, "lat": sim_lat, "lon": sim_lon, "alt": sim_alt,
+                        "speed_knots": sim_speed_knots, "course": sim_heading,
+                        "satellites": 12, "fix_quality": 1
                     }
                     self._has_satellite_fix = True
                     self._last_fix = fix

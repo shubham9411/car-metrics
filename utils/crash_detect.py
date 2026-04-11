@@ -1,6 +1,10 @@
 """
-Car Metrics — Crash / Event Detection
-Monitors accelerometer G-force magnitude and triggers alerts.
+Car Metrics — Smart Event Detection
+Monitors accelerometer axes to classify driving events:
+  - Sudden Brake / Sudden Accel (longitudinal ax)
+  - Sharp Turn (lateral ay)
+  - Pothole (vertical az spike)
+  - High Impact (balanced extreme)
 """
 
 import logging
@@ -13,12 +17,11 @@ logger = logging.getLogger("utils.crash_detect")
 
 
 class CrashDetector:
-    """Detects high-G events from IMU readings."""
+    """Detects and classifies driving events from IMU readings."""
 
     def __init__(self, on_event=None):
         """
-        on_event: callback(g_force: float) called when threshold exceeded.
-                  Used to trigger camera burst, log event, etc.
+        on_event: callback(event_type: str, g_force: float, details: str)
         """
         self._on_event = on_event
         self._last_trigger_ts = 0
@@ -37,17 +40,40 @@ class CrashDetector:
         # Total G-force magnitude (at rest: ~1.0g from gravity)
         g_total = math.sqrt(ax * ax + ay * ay + az * az)
 
-        # We care about deviation from normal gravity (~1g)
-        # So effective impact G = |g_total - 1.0| for simple detection
-        # Or just use raw total if threshold accounts for gravity
         if g_total >= self._threshold:
             now = time.time()
             if now - self._last_trigger_ts > self._cooldown:
                 self._last_trigger_ts = now
+
+                # Classify by dominant axis
+                event_type, details = self._classify(ax, ay, az, g_total)
+
                 logger.warning(
-                    "⚠️  High-G event detected: %.2fg (threshold: %.1fg)",
-                    g_total,
-                    self._threshold,
+                    "⚠️  %s detected: %.2fg (threshold: %.1fg)",
+                    event_type, g_total, self._threshold,
                 )
                 if self._on_event:
-                    self._on_event(g_total)
+                    self._on_event(event_type, g_total, details)
+
+    @staticmethod
+    def _classify(ax, ay, az, g_total):
+        """Classify event based on which axis dominates the impact."""
+        abs_ax = abs(ax)
+        abs_ay = abs(ay)
+        # az deviation from gravity (normal ~1.0g)
+        abs_az_dev = abs(az - 1.0)
+
+        dominant = max(abs_ax, abs_ay, abs_az_dev)
+
+        if dominant == abs_ax:
+            if ax < 0:
+                return "sudden_brake", f"Longitudinal decel: {ax:.2f}g"
+            else:
+                return "sudden_accel", f"Longitudinal accel: {ax:.2f}g"
+        elif dominant == abs_ay:
+            direction = "left" if ay < 0 else "right"
+            return "sharp_turn", f"Lateral {direction}: {ay:.2f}g"
+        elif dominant == abs_az_dev:
+            return "pothole", f"Vertical shock: {az:.2f}g (dev {abs_az_dev:.2f})"
+        else:
+            return "high_impact", f"Total: {g_total:.2f}g"

@@ -92,6 +92,7 @@ def _init_schema(conn: sqlite3.Connection):
             lat REAL,
             lon REAL,
             details TEXT,
+            trip_id INTEGER,
             synced INTEGER DEFAULT 0
         );
 
@@ -105,6 +106,7 @@ def _init_schema(conn: sqlite3.Connection):
             end_lon REAL,
             distance REAL DEFAULT 0.0,
             score INTEGER DEFAULT 100,
+            is_mock INTEGER DEFAULT 0,
             synced INTEGER DEFAULT 0
         );
 
@@ -156,6 +158,13 @@ def _init_schema(conn: sqlite3.Connection):
     for col, default in [("speed", "NULL"), ("alt", "NULL"), ("course", "NULL")]:
         try:
             conn.execute(f"ALTER TABLE trip_routes ADD COLUMN {col} REAL DEFAULT {default}")
+        except sqlite3.OperationalError:
+            pass
+
+    # Phase 6 migrations
+    for tbl, col, default in [("trips", "is_mock", "0"), ("events", "trip_id", "NULL")]:
+        try:
+            conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} INTEGER DEFAULT {default}")
         except sqlite3.OperationalError:
             pass
 
@@ -216,8 +225,8 @@ def insert_event(event: dict):
     """Insert a crash/incident event."""
     conn = get_connection()
     conn.execute(
-        """INSERT INTO events (ts, event_type, g_force, lat, lon, details)
-           VALUES (:ts, :event_type, :g_force, :lat, :lon, :details)""",
+        """INSERT INTO events (ts, event_type, g_force, lat, lon, details, trip_id)
+           VALUES (:ts, :event_type, :g_force, :lat, :lon, :details, :trip_id)""",
         event,
     )
     conn.commit()

@@ -453,20 +453,52 @@ async function openTripDrilldown(tripId) {
         const data = await res.json();
         if (data.error) { el('tripDrillSummary').textContent = data.error; return; }
 
-        const { trip, route, events } = data;
+        const { trip, route, events, analytics } = data;
 
         // Summary stats
         const startDate = new Date(trip.start_ts * 1000);
         const duration = trip.end_ts ? Math.round((trip.end_ts - trip.start_ts) / 60) : Math.round((Date.now() / 1000 - trip.start_ts) / 60);
-        const maxSpeed = route.reduce((max, p) => Math.max(max, p.speed || 0), 0);
         const score = trip.score ?? 100;
         const scoreColor = score >= 95 ? '#34d399' : score >= 80 ? '#fbbf24' : '#ef4444';
 
-        el('tripDrillSummary').textContent = `Started ${startDate.toLocaleString()} · ${trip.end_ts ? 'Completed' : 'Active'}`;
-        el('tripDrillScore').innerHTML = `<span style="color:${scoreColor}">${score}</span>`;
+        const totalPenalty = analytics.total_penalty || 0;
+        const penaltyInfo = totalPenalty > 0 ? `<div style="font-size:0.75rem; opacity:0.7; margin-top:4px;">-${totalPenalty} raw pts</div>` : '';
+
+        el('tripDrillSummary').textContent = `${startDate.toLocaleDateString()} · ${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${trip.end_ts ? 'Completed' : 'Active'}`;
+        el('tripDrillScore').innerHTML = `<span style="color:${scoreColor}">${score}</span>${penaltyInfo}`;
         el('tripDrillDuration').textContent = `${duration} min`;
-        el('tripDrillMaxSpeed').textContent = `${maxSpeed.toFixed(0)} kph`;
-        el('tripDrillEvents').textContent = events.length;
+        el('tripDrillAvgSpeed').textContent = `${analytics.avg_speed} kph`;
+        el('tripDrillMaxSpeed').textContent = `${analytics.max_speed} kph`;
+        el('tripDrillDistance').textContent = analytics.distance > 1000 ? `${(analytics.distance / 1000).toFixed(1)} km` : `${analytics.distance} m`;
+
+        // Address bar
+        el('tripDrillStartAddr').textContent = analytics.start_address || 'Unknown';
+        el('tripDrillEndAddr').textContent = analytics.end_address || (trip.end_ts ? 'Unknown' : 'In progress...');
+
+        // Event breakdown pills
+        const pillsContainer = el('tripDrillEventPills');
+        const breakdown = analytics.event_breakdown || {};
+        const eventMeta = {
+            speeding: { label: 'Speeding', color: '#f59e0b', icon: '⚡', penalty: 3 },
+            sudden_brake: { label: 'Sudden Brake', color: '#ef4444', icon: '🛑', penalty: 5 },
+            sudden_accel: { label: 'Sudden Accel', color: '#f97316', icon: '🚀', penalty: 3 },
+            sharp_turn: { label: 'Sharp Turn', color: '#a855f7', icon: '🔄', penalty: 4 },
+            pothole: { label: 'Pothole', color: '#6366f1', icon: '🕳️', penalty: 2 },
+            high_impact: { label: 'High Impact', color: '#dc2626', icon: '💥', penalty: 8 },
+        };
+
+        // Always show all event types even if 0
+        const allTypes = ['speeding', 'sudden_brake', 'sudden_accel', 'sharp_turn', 'pothole'];
+        let pillsHtml = '';
+        for (const t of allTypes) {
+            const count = breakdown[t] || 0;
+            const meta = eventMeta[t] || { label: t, color: '#888', icon: '⚠', penalty: 5 };
+            const opacity = count > 0 ? '1' : '0.4';
+            const totalPenalty = count * meta.penalty;
+            const penaltyText = count > 0 ? ` <span style="opacity:0.7; font-size:0.75rem; margin-left:4px;">(-${totalPenalty})</span>` : '';
+            pillsHtml += `<span style="display:inline-flex; align-items:center; gap:6px; padding:6px 14px; border-radius:20px; background:${meta.color}20; border:1px solid ${meta.color}40; font-size:0.82rem; color:${meta.color}; opacity:${opacity}; font-weight:500;">${meta.icon} ${count}× ${meta.label}${penaltyText}</span>`;
+        }
+        pillsContainer.innerHTML = pillsHtml || '<span style="color:var(--text-dim); font-size:0.85rem;">No events</span>';
 
         // Map: gradient polyline
         if (tripDrillMap) { tripDrillMap.remove(); tripDrillMap = null; }
@@ -487,11 +519,19 @@ async function openTripDrilldown(tripId) {
                 L.marker([route[0].lat, route[0].lon], { icon: mkIcon('#34d399') }).addTo(tripDrillMap).bindTooltip('Start');
                 L.marker([route[route.length - 1].lat, route[route.length - 1].lon], { icon: mkIcon('#ef4444') }).addTo(tripDrillMap).bindTooltip('End');
 
-                // Event markers
+                // Classified event markers
                 for (const ev of events) {
                     if (ev.lat && ev.lon) {
-                        const evIcon = L.divIcon({ className: '', html: '<div style="width:20px;height:20px;background:#ef4444;border:2px solid #fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;font-weight:bold;box-shadow:0 0 12px #ef444480">⚠</div>', iconSize: [20, 20], iconAnchor: [10, 10] });
-                        L.marker([ev.lat, ev.lon], { icon: evIcon }).addTo(tripDrillMap).bindTooltip(`${ev.event_type} — ${(ev.g_force || 0).toFixed(1)}g`);
+                        const meta = eventMeta[ev.event_type] || { label: ev.event_type, color: '#ef4444', icon: '⚠' };
+                        const evIcon = L.divIcon({
+                            className: '',
+                            html: `<div style="width:22px;height:22px;background:${meta.color};border:2px solid #fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;box-shadow:0 0 12px ${meta.color}80">${meta.icon}</div>`,
+                            iconSize: [22, 22], iconAnchor: [11, 11]
+                        });
+                        const tooltip = ev.event_type === 'speeding'
+                            ? `${meta.label}: ${(ev.g_force || 0).toFixed(0)} kph`
+                            : `${meta.label}: ${(ev.g_force || 0).toFixed(1)}g`;
+                        L.marker([ev.lat, ev.lon], { icon: evIcon }).addTo(tripDrillMap).bindTooltip(tooltip);
                     }
                 }
 
@@ -620,11 +660,20 @@ fetch('/api/settings/simulate_data')
     .then(r => r.json())
     .then(d => { if (el('simulateDataToggle')) el('simulateDataToggle').checked = d.enabled; });
 
-el('simulateDataToggle')?.addEventListener('change', () => {
+el('simulateDataToggle')?.addEventListener('change', async () => {
     const enabled = el('simulateDataToggle').checked;
-    fetch('/api/settings/simulate_data', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled })
-    });
+    try {
+        const res = await fetch('/api/settings/simulate_data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled })
+        });
+        const data = await res.json();
+        if (data.status === 'blocked') {
+            alert('🚗 ' + data.message);
+            el('simulateDataToggle').checked = false; // revert
+        }
+    } catch (e) {
+        console.error('Simulate toggle error:', e);
+    }
 });

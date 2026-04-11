@@ -34,32 +34,34 @@ class CarMetrics:
     """Main application — orchestrates all components."""
 
     def __init__(self):
-        self.camera = CameraPoller()
-        self.imu = IMUPoller()
         self.gps = GPSPoller()
-        self.obd = OBDPoller()
+        self.camera = CameraPoller()
+        self.imu = IMUPoller(gps_poller=self.gps)
+        self.obd = OBDPoller(gps_poller=self.gps)
         self.trip_manager = TripManager(self.gps, self.obd)
         self.sync_engine = SyncEngine()
         self.crash_detector = CrashDetector(on_event=self._on_crash_event)
         self._shutdown_event = asyncio.Event()
 
-    def _on_crash_event(self, g_force: float):
-        """Called when crash detector fires — trigger camera burst + log event."""
+    def _on_crash_event(self, event_type: str, g_force: float, details: str):
+        """Called when crash detector fires — trigger camera burst + log classified event."""
         self.camera.trigger_burst()
 
         # Log event to DB with GPS position if available
         fix = self.gps.last_fix
         db.insert_event({
             "ts": time.time(),
-            "event_type": "high_g",
+            "event_type": event_type,
             "g_force": g_force,
             "lat": fix["lat"] if fix else None,
             "lon": fix["lon"] if fix else None,
-            "details": f"G-force: {g_force:.2f}g",
+            "details": details,
+            "trip_id": self.trip_manager.active_trip_id,
         })
         
-        # Deduct score for harsh collisions / bumps
-        self.trip_manager.deduct_event_penalty(5)
+        # Variable penalty by type
+        penalties = {"sudden_brake": 5, "sudden_accel": 3, "sharp_turn": 4, "pothole": 2, "high_impact": 8, "speeding": 3}
+        self.trip_manager.deduct_event_penalty(penalties.get(event_type, 5))
 
     async def _heartbeat(self):
         """Periodic status log — CPU/RAM usage for diagnostics."""

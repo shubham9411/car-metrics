@@ -217,12 +217,11 @@ def api_routes():
 
 @app.route("/api/trips/<trip_id:int>")
 def api_trip_detail(trip_id):
-    """Get full drilldown data for a single trip: summary, enriched route, events."""
+    """Get full drilldown data for a single trip: summary, enriched route, events, analytics."""
     conn = db.get_connection()
     response.content_type = "application/json"
 
     try:
-        # Trip summary
         trip = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
         if not trip:
             response.status = 404
@@ -230,31 +229,122 @@ def api_trip_detail(trip_id):
 
         trip_data = _row_to_dict(trip)
 
-        # Route with speed/alt/course for gradient maps
+        # Route with speed/alt/course
         route_rows = conn.execute(
             "SELECT ts, lat, lon, speed, alt, course FROM trip_routes WHERE trip_id=? ORDER BY ts ASC",
             (trip_id,)
         ).fetchall()
         route = [_row_to_dict(r) for r in route_rows]
 
-        # Events that happened during this trip's timeframe
-        events = []
-        if trip_data.get("start_ts"):
+        # Real-time distance calculation (on-the-fly summation)
+        distance_m = _calculate_route_distance(route)
+
+        # Computed analytics from route
+        speeds = [p["speed"] for p in route if p.get("speed") is not None]
+        avg_speed = sum(speeds) / len(speeds) if speeds else 0
+        max_speed = max(speeds) if speeds else 0
+
+        # Events for this trip
+        ev_rows = conn.execute(
+            "SELECT * FROM events WHERE trip_id=? ORDER BY ts ASC",
+            (trip_id,)
+        ).fetchall()
+
+        # Fallback: if no trip_id-linked events, try timestamp range (legacy data)
+        if not ev_rows and trip_data.get("start_ts"):
             end_ts = trip_data.get("end_ts") or time.time()
             ev_rows = conn.execute(
                 "SELECT * FROM events WHERE ts >= ? AND ts <= ? ORDER BY ts ASC",
                 (trip_data["start_ts"], end_ts)
             ).fetchall()
-            events = [_row_to_dict(r) for r in ev_rows]
+
+        events = [_row_to_dict(r) for r in ev_rows]
+
+        # Event breakdown and total penalty calculation
+        # Penalties: brake:5, accel:3, turn:4, pothole:2, speeding:3, impact:8
+        penalties = {"sudden_brake": 5, "sudden_accel": 3, "sharp_turn": 4, "pothole": 2, "high_impact": 8, "speeding": 3}
+        total_penalty_points = 0
+        event_breakdown = {}
+        for ev in events:
+            t = ev.get("event_type", "unknown")
+            event_breakdown[t] = event_breakdown.get(t, 0) + 1
+            total_penalty_points += penalties.get(t, 5)
+
+        # Dynamic Weighted Score: 100 - (Penalties / (1 + Dist_KM / 5))
+        dist_km = distance_m / 1000.0
+        weighted_score = 100 - (total_penalty_points / (1 + dist_km / 5.0))
+        weighted_score = max(0, min(100, round(weighted_score, 1)))
+
+        # Update trip_data score for the response (doesn't mutate DB here)
+        trip_data["score"] = weighted_score
+        trip_data["distance"] = distance_m
+
+        # Reverse geocode start/end
+        start_addr = _reverse_geocode(trip_data.get("start_lat"), trip_data.get("start_lon"))
+        end_addr = _reverse_geocode(trip_data.get("end_lat"), trip_data.get("end_lon"))
 
         return json.dumps({
             "trip": trip_data,
             "route": route,
             "events": events,
+            "analytics": {
+                "avg_speed": round(avg_speed, 1),
+                "max_speed": round(max_speed, 1),
+                "distance": round(distance_m),
+                "event_breakdown": event_breakdown,
+                "start_address": start_addr,
+                "end_address": end_addr,
+                "total_penalty": total_penalty_points,
+            }
         })
     except Exception as e:
         logger.error(f"Error fetching trip {trip_id}: {e}")
         return json.dumps({"error": str(e)})
+
+
+def _calculate_route_distance(route):
+    """Sum haversine distance between all points in a route."""
+    if len(route) < 2:
+        return 0.0
+    total = 0.0
+    for i in range(len(route) - 1):
+        p1 = route[i]
+        p2 = route[i+1]
+        # Skip if coordinates missing
+        if p1["lat"] is None or p2["lat"] is None: continue
+        
+        # Simple Haversine approximation
+        d_lat = abs(p1["lat"] - p2["lat"]) * 111139
+        d_lon = abs(p1["lon"] - p2["lon"]) * 111139 * math.cos(math.radians(p1["lat"]))
+        total += math.sqrt(d_lat**2 + d_lon**2)
+    return total
+
+
+# In-memory geocode cache (cleared on restart)
+_geocode_cache = {}
+
+def _reverse_geocode(lat, lon):
+    """Best-effort reverse geocode via Nominatim. Returns address string or None."""
+    if lat is None or lon is None:
+        return None
+    key = f"{lat:.4f},{lon:.4f}"
+    if key in _geocode_cache:
+        return _geocode_cache[key]
+    try:
+        import urllib.request
+        url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&zoom=16"
+        req = urllib.request.Request(url, headers={"User-Agent": "car-metrics/1.0"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode())
+            addr = data.get("display_name", "")
+            # Shorten to locality level
+            parts = addr.split(", ")
+            short = ", ".join(parts[:3]) if len(parts) > 3 else addr
+            _geocode_cache[key] = short
+            return short
+    except Exception:
+        _geocode_cache[key] = None
+        return None
 
 
 @app.route("/api/intersections")
@@ -355,12 +445,28 @@ SIM_DATA_FILE = os.path.join(config.DATA_DIR, ".simulate_data")
 
 @app.route("/api/settings/simulate_data", method=["GET", "POST"])
 def api_simulate_data():
-    """Get or set the data simulation override toggle."""
+    """Get or set the data simulation override toggle.
+    Safety: blocks enable if OBD shows car is actually running."""
     if request.method == "POST":
         try:
             data = request.json or {}
             enabled = bool(data.get("enabled", False))
+
             if enabled:
+                # Safety guard: check if the car is actually running via real OBD speed
+                conn = db.get_connection()
+                cutoff = time.time() - 30  # last 30 seconds
+                row = conn.execute(
+                    "SELECT value FROM obd_readings WHERE pid='SPEED' AND ts > ? ORDER BY ts DESC LIMIT 1",
+                    (cutoff,)
+                ).fetchone()
+                if row and row["value"] and float(row["value"]) > 5.0:
+                    response.status = 409
+                    return json.dumps({
+                        "status": "blocked",
+                        "message": "Cannot enable simulation while car is running (OBD speed detected)."
+                    })
+
                 open(SIM_DATA_FILE, "w").close()
             else:
                 if os.path.exists(SIM_DATA_FILE):
