@@ -103,6 +103,17 @@ def _init_schema(conn: sqlite3.Connection):
             start_lon REAL,
             end_lat REAL,
             end_lon REAL,
+            distance REAL DEFAULT 0.0,
+            score INTEGER DEFAULT 100,
+            synced INTEGER DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS trip_routes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trip_id INTEGER NOT NULL,
+            ts REAL NOT NULL,
+            lat REAL,
+            lon REAL,
             synced INTEGER DEFAULT 0
         );
 
@@ -115,9 +126,19 @@ def _init_schema(conn: sqlite3.Connection):
         CREATE INDEX IF NOT EXISTS idx_imu_synced ON imu_readings(synced);
         CREATE INDEX IF NOT EXISTS idx_gps_synced ON gps_fixes(synced);
         CREATE INDEX IF NOT EXISTS idx_obd_synced ON obd_readings(synced);
-        CREATE INDEX IF NOT EXISTS idx_cam_synced ON camera_frames(synced);
         CREATE INDEX IF NOT EXISTS idx_events_synced ON events(synced);
     """)
+
+    # Safe schema migrations for existing local databases
+    try:
+        conn.execute("ALTER TABLE trips ADD COLUMN distance REAL DEFAULT 0.0")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        conn.execute("ALTER TABLE trips ADD COLUMN score INTEGER DEFAULT 100")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
 
 

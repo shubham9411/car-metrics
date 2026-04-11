@@ -8,6 +8,8 @@ Falls back to IP geolocation or default coords when indoors.
 import asyncio
 import json
 import logging
+import math
+import os
 import time
 import urllib.request
 
@@ -113,8 +115,27 @@ class GPSPoller:
 
         logger.info("GPS poller started")
 
+        sim_file = os.path.join(config.DATA_DIR, ".simulate_data")
+
         while self._running:
             try:
+                if os.path.exists(sim_file):
+                    # Emulate moving in a circle around San Francisco
+                    t = time.time()
+                    lat = 37.7749 + math.sin(t / 20) * 0.01
+                    lon = -122.4194 + math.cos(t / 20) * 0.01
+                    
+                    fix = {
+                        "ts": t, "lat": lat, "lon": lon, "alt": 15.0,
+                        "speed_knots": 25.0 + math.sin(t / 10) * 15.0, "course": 90.0,
+                        "satellites": 8, "fix_quality": 1
+                    }
+                    self._has_satellite_fix = True
+                    self._last_fix = fix
+                    db.insert_gps_fix(fix)
+                    await asyncio.sleep(1.0)
+                    continue
+
                 # readline blocks briefly (timeout=1s), we run in executor
                 line = await asyncio.get_event_loop().run_in_executor(
                     None, self._read_line

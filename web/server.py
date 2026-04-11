@@ -174,6 +174,49 @@ def api_events():
     return json.dumps([_row_to_dict(r) for r in rows])
 
 
+@app.route("/api/trips")
+def api_trips():
+    """Get summarized trip sessions."""
+    limit = min(int(request.query.get("limit", 20)), 100)
+    conn = db.get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM trips ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        response.content_type = "application/json"
+        return json.dumps([_row_to_dict(r) for r in rows])
+    except Exception as e:
+        logger.error(f"Error fetching trips: {e}")
+        response.content_type = "application/json"
+        return "[]"
+
+
+@app.route("/api/routes")
+def api_routes():
+    """Get downsampled route tracks for Fog of War map mapping."""
+    # We fetch ALL points ordered by ts ascending, so line logic connects correctly
+    conn = db.get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT trip_id, lat, lon FROM trip_routes ORDER BY ts ASC"
+        ).fetchall()
+        
+        # Group by trip_id so we can draw separate polylines properly!
+        trips = {}
+        for r in rows:
+            tid = r["trip_id"]
+            if tid not in trips:
+                trips[tid] = []
+            trips[tid].append([r["lat"], r["lon"]])
+            
+        response.content_type = "application/json"
+        return json.dumps(list(trips.values()))
+    except Exception as e:
+        logger.error(f"Error fetching routes: {e}")
+        response.content_type = "application/json"
+        return "[]"
+
+
 # ─── API: Images ──────────────────────────────────
 
 @app.route("/api/images")

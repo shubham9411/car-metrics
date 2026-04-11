@@ -27,6 +27,7 @@ function onPageSwitch(page) {
     if (page === 'images') loadImages(true);
     if (page === 'gps') loadGps();
     if (page === 'events') loadEvents();
+    if (page === 'trips') loadTrips();
 }
 
 // ─── Status Polling ─────────────────────────────
@@ -277,6 +278,7 @@ let gpsMap = null;
 let gpsMarker = null;
 let gpsTrackLine = null;
 let gpsMapInitialized = false;
+let gpsBoundsSet = false;
 
 function initMap() {
     if (gpsMapInitialized) return;
@@ -325,23 +327,30 @@ function updateMapPosition(lat, lon) {
 
 async function loadGpsTrack() {
     try {
-        const res = await fetch('/api/gps?limit=500');
-        const rows = await res.json();
-        if (!gpsMap || rows.length === 0) return;
+        const res = await fetch('/api/routes');
+        const tripsArray = await res.json();
 
-        // Build track from points (oldest first)
-        const trackPoints = rows
-            .filter(r => r.lat != null && r.lon != null)
-            .reverse()
-            .map(r => [r.lat, r.lon]);
+        if (!gpsMap || !Array.isArray(tripsArray) || tripsArray.length === 0) return;
 
-        if (trackPoints.length > 0) {
-            gpsTrackLine.setLatLgs ? gpsTrackLine.setLatLngs(trackPoints) : gpsTrackLine.setLatLngs(trackPoints);
-            // Center on latest point
-            const latest = trackPoints[trackPoints.length - 1];
-            updateMapPosition(latest[0], latest[1]);
+        // Draw multiple disjoint polylines representing historically isolated trips
+        gpsTrackLine.setLatLngs(tripsArray);
+
+        // Set the active marker onto the very last known point, if it exists
+        const lastTrip = tripsArray[tripsArray.length - 1];
+        if (lastTrip && lastTrip.length > 0) {
+            const latest = lastTrip[lastTrip.length - 1];
+            if (gpsMarker) {
+                const latlng = L.latLng(latest[0], latest[1]);
+                gpsMarker.setLatLng(latlng);
+            }
+            if (!gpsBoundsSet) {
+                gpsMap.fitBounds(gpsTrackLine.getBounds(), { padding: [20, 20], maxZoom: 15 });
+                gpsBoundsSet = true;
+            }
         }
-    } catch (e) { }
+    } catch (e) {
+        console.error("Map route load error:", e);
+    }
 }
 
 async function loadGps() {
@@ -354,30 +363,62 @@ async function loadGps() {
     try {
         const res = await fetch('/api/gps?limit=50');
         const rows = await res.json();
-        const tbody = el('gpsTable');
-        tbody.innerHTML = '';
-
         // Update map with latest position
         if (rows.length > 0 && rows[0].lat != null) {
             updateMapPosition(rows[0].lat, rows[0].lon);
+
+            // Populate the global map widgets
+            if (el('gpsLat')) el('gpsLat').textContent = rows[0].lat.toFixed(6) || '--';
+            if (el('gpsLon')) el('gpsLon').textContent = rows[0].lon.toFixed(6) || '--';
+            if (el('gpsSats')) el('gpsSats').textContent = rows[0].satellites || '--';
         }
 
-        // Build track line from all points
-        const trackPoints = rows
-            .filter(r => r.lat != null && r.lon != null)
-            .reverse()
-            .map(r => [r.lat, r.lon]);
-        if (gpsTrackLine && trackPoints.length > 0) {
-            gpsTrackLine.setLatLngs(trackPoints);
+        // Draw Fog of War overlay
+        loadGpsTrack();
+    } catch (e) {
+        console.error("GPS load error:", e);
+    }
+}
+// ─── Trips ──────────────────────────────────────
+
+async function loadTrips() {
+    try {
+        const res = await fetch('/api/trips?limit=20');
+        const rows = await res.json();
+        const tbody = el('tripsTable');
+        if (!tbody) return;
+
+        tbody.innerHTML = '';
+
+        if (rows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:30px; opacity:0.5;">No trips recorded yet.</td></tr>';
+            return;
         }
 
-        for (const r of rows) {
-            const ts = new Date(r.ts * 1000);
+        for (const trip of rows) {
+            const startDate = new Date(trip.start_ts * 1000);
+            const duration = trip.end_ts ? Math.round((trip.end_ts - trip.start_ts) / 60) : Math.round((Date.now() / 1000 - trip.start_ts) / 60);
+            const statusLabel = trip.end_ts ? "Completed" : "<span style='color:var(--accent); font-weight:bold;'>Active</span>";
+
+            // Format score to 1 decimal with color
+            const rawScore = trip.driver_score ?? 100;
+            const scoreColor = rawScore >= 95 ? "#34d399" : rawScore >= 80 ? "#fbbf24" : "#ef4444";
+
             const tr = document.createElement('tr');
-            tr.innerHTML = `<td>${ts.toLocaleTimeString()}</td><td>${r.lat?.toFixed(6) ?? '--'}</td><td>${r.lon?.toFixed(6) ?? '--'}</td><td>${r.alt != null ? Math.round(r.alt) : '--'}</td><td>${r.speed_knots?.toFixed(1) ?? '--'}</td><td>${r.satellites ?? '--'}</td>`;
+            tr.style.borderBottom = "1px solid var(--border)";
+            tr.innerHTML = `
+                <td style="padding:12px; font-family:var(--font-data)">#${trip.id}</td>
+                <td style="padding:12px;">${startDate.toLocaleString()}</td>
+                <td style="padding:12px;">${duration} min · ${statusLabel}</td>
+                <td style="padding:12px;">
+                    <div style="font-weight:600; color:${scoreColor}">${rawScore.toFixed(1)} <span style="font-size:0.75rem; opacity:0.6; font-weight:normal">/100</span></div>
+                </td>
+            `;
             tbody.appendChild(tr);
         }
-    } catch (e) { }
+    } catch (e) {
+        console.error("Trips load error:", e);
+    }
 }
 
 // ─── Events ─────────────────────────────────────
@@ -433,6 +474,14 @@ setInterval(() => {
 }, IMG_REFRESH_MS);
 
 // ─── Toggles & Overrides ────────────────────────
+
+// Main tab polling loop
+setInterval(() => {
+    if (currentPage === 'imu') loadImu();
+    if (currentPage === 'obd') loadObd();
+    if (currentPage === 'gps') loadGps();
+    if (currentPage === 'trips') loadTrips();
+}, REFRESH_MS);
 
 // Force Camera state
 fetch('/api/settings/force_camera')

@@ -18,6 +18,7 @@ from pollers.imu import IMUPoller
 from pollers.gps import GPSPoller
 from pollers.camera import CameraPoller
 from pollers.obd import OBDPoller
+from pollers.trip_manager import TripManager
 from utils.crash_detect import CrashDetector
 
 # ─── Logging setup ────────────────────────────────
@@ -37,6 +38,7 @@ class CarMetrics:
         self.imu = IMUPoller()
         self.gps = GPSPoller()
         self.obd = OBDPoller()
+        self.trip_manager = TripManager(self.gps, self.obd)
         self.sync_engine = SyncEngine()
         self.crash_detector = CrashDetector(on_event=self._on_crash_event)
         self._shutdown_event = asyncio.Event()
@@ -55,6 +57,9 @@ class CarMetrics:
             "lon": fix["lon"] if fix else None,
             "details": f"G-force: {g_force:.2f}g",
         })
+        
+        # Deduct score for harsh collisions / bumps
+        self.trip_manager.deduct_event_penalty(5)
 
     async def _heartbeat(self):
         """Periodic status log — CPU/RAM usage for diagnostics."""
@@ -117,6 +122,7 @@ class CarMetrics:
             asyncio.create_task(self.gps.run()),
             asyncio.create_task(self.camera.run()),
             asyncio.create_task(self.obd.run()),
+            asyncio.create_task(self.trip_manager.run()),
             asyncio.create_task(self.sync_engine.run()),
             asyncio.create_task(self._heartbeat()),
             asyncio.create_task(self._obd_camera_link()),
@@ -132,11 +138,11 @@ class CarMetrics:
 
     def shutdown(self):
         """Graceful shutdown."""
-        logger.info("Shutting down...")
         self.imu.stop()
         self.gps.stop()
         self.camera.stop()
         self.obd.stop()
+        self.trip_manager.stop()
         self.sync_engine.stop()
         db.close()
         self._shutdown_event.set()

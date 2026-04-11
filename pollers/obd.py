@@ -5,6 +5,8 @@ Reads car ECU data via Bluetooth ELM327 using python-obd in async mode.
 
 import asyncio
 import logging
+import math
+import os
 import time
 
 import config
@@ -25,6 +27,15 @@ class OBDPoller:
     def latest(self) -> dict:
         """Latest OBD values for dashboard use."""
         return dict(self._latest_values)
+
+    def get_rpm(self) -> float:
+        # Faked RPM injected directly into logic if mock enabled
+        sim_file = os.path.join(config.DATA_DIR, ".simulate_data")
+        if os.path.exists(sim_file):
+            return 2500.0 + math.sin(time.time() / 10.0) * 1500.0
+            
+        val = self._latest_values.get("RPM")
+        return val["value"] if val else 0.0
 
     def _init_connection(self):
         """Connect to ELM327 via Bluetooth serial."""

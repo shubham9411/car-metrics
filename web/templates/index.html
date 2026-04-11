@@ -543,10 +543,13 @@
                     <i class="ph ph-activity"></i> IMU & Env
                 </button>
                 <button class="nav-btn" data-page="gps">
-                    <i class="ph ph-crosshair"></i> Location
+                    <i class="ph ph-globe-hemisphere-west"></i> Global Map
                 </button>
                 <button class="nav-btn" data-page="obd">
                     <i class="ph ph-engine"></i> OBD2
+                </button>
+                <button class="nav-btn" data-page="trips">
+                    <i class="ph ph-flag-checkered"></i> Recent Trips
                 </button>
                 <button class="nav-btn" data-page="images">
                     <i class="ph ph-camera"></i> Camera
@@ -692,7 +695,7 @@
 
                 <div class="panel glass">
                     <div class="panel-header">
-                        <div class="panel-title">Live Tracking</div>
+                        <div class="panel-title">Global Map (Fog of War)</div>
                     </div>
                     <div id="gpsMap"
                         style="height: 400px; width: 100%; border-radius: 12px; background: #000; border:1px solid var(--border)">
@@ -713,6 +716,31 @@
                         <p>Make sure the engine is running and adapter is plugged.</p>
                     </div>
                     <div class="data-list" id="obdGrid"></div>
+                </div>
+            </div>
+
+            <!-- Trips Page -->
+            <div class="page" id="page-trips">
+                <div class="panel glass">
+                    <div class="panel-header">
+                        <div class="panel-title">Recent Trips</div>
+                    </div>
+                    <div style="overflow-x:auto;">
+                        <table style="width:100%; border-collapse:collapse; font-size:0.9rem">
+                            <thead>
+                                <tr
+                                    style="border-bottom:1px solid var(--border); color:var(--text-dim); text-align:left;">
+                                    <th style="padding:12px;">Trip ID</th>
+                                    <th style="padding:12px;">Start Time</th>
+                                    <th style="padding:12px;">Duration / Status</th>
+                                    <th style="padding:12px;">Driver Score</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tripsTable" style="color:var(--text-pure);">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
 
