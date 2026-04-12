@@ -141,6 +141,26 @@ def _init_schema(conn: sqlite3.Connection):
         CREATE INDEX IF NOT EXISTS idx_gps_synced ON gps_fixes(synced);
         CREATE INDEX IF NOT EXISTS idx_obd_synced ON obd_readings(synced);
         CREATE INDEX IF NOT EXISTS idx_events_synced ON events(synced);
+
+        CREATE TABLE IF NOT EXISTS locations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            lat REAL NOT NULL,
+            lon REAL NOT NULL,
+            visit_count INTEGER DEFAULT 1,
+            last_visit_ts REAL
+        );
+
+        CREATE TABLE IF NOT EXISTS routines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            start_location_id INTEGER,
+            end_location_id INTEGER,
+            pb_duration REAL,
+            avg_duration REAL,
+            trip_count INTEGER DEFAULT 0,
+            FOREIGN KEY(start_location_id) REFERENCES locations(id),
+            FOREIGN KEY(end_location_id) REFERENCES locations(id)
+        );
     """)
 
     # Safe schema migrations for existing local databases
@@ -167,6 +187,18 @@ def _init_schema(conn: sqlite3.Connection):
             conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} INTEGER DEFAULT {default}")
         except sqlite3.OperationalError:
             pass
+
+    # Phase 8 migrations: Ghost Ride
+    for col in ["start_location_id", "end_location_id"]:
+        try:
+            conn.execute(f"ALTER TABLE trips ADD COLUMN {col} INTEGER")
+        except sqlite3.OperationalError:
+            pass
+
+    try:
+        conn.execute("ALTER TABLE routines ADD COLUMN pb_trip_id INTEGER")
+    except sqlite3.OperationalError:
+        pass
 
     conn.commit()
 
@@ -264,3 +296,48 @@ def close():
         _conn.close()
         _conn = None
         logger.info("Database closed")
+
+
+# ─── Spatial Helpers ──────────────────────────────
+
+def get_nearby_location(lat: float, lon: float, radius_m: float = 100):
+    """Find a location record within radius_m of a point (bounding box filter)."""
+    conn = get_connection()
+    deg_per_m = 1.0 / 111000.0
+    margin = radius_m * deg_per_m
+    cur = conn.execute("""
+        SELECT * FROM locations 
+        WHERE lat BETWEEN ? AND ? 
+          AND lon BETWEEN ? AND ?
+        LIMIT 1
+    """, (lat - margin, lat + margin, lon - margin, lon + margin))
+    return cur.fetchone()
+
+def upsert_location(lat: float, lon: float, name: str = None) -> int:
+    """Insert or increment visit count for a location."""
+    conn = get_connection()
+    loc = get_nearby_location(lat, lon)
+    if loc:
+        conn.execute("UPDATE locations SET visit_count = visit_count + 1, last_visit_ts = ? WHERE id = ?", (time.time(), loc['id']))
+        return loc['id']
+    else:
+        cur = conn.execute("INSERT INTO locations (lat, lon, visit_count, last_visit_ts, name) VALUES (?, ?, 1, ?, ?)", (lat, lon, time.time(), name))
+        return cur.lastrowid
+
+def get_routine(start_loc_id: int, end_loc_id: int):
+    conn = get_connection()
+    cur = conn.execute("SELECT * FROM routines WHERE start_location_id = ? AND end_location_id = ?", (start_loc_id, end_loc_id))
+    return cur.fetchone()
+
+def upsert_routine(start_loc_id: int, end_loc_id: int, duration: float, trip_id: int):
+    conn = get_connection()
+    r = get_routine(start_loc_id, end_loc_id)
+    if r:
+        is_new_pb = r['pb_duration'] is None or duration < r['pb_duration']
+        new_pb = min(r['pb_duration'] if r['pb_duration'] else duration, duration)
+        new_pb_trip = trip_id if is_new_pb else r['pb_trip_id']
+        new_avg = (r['avg_duration'] * r['trip_count'] + duration) / (r['trip_count'] + 1)
+        conn.execute("UPDATE routines SET pb_duration = ?, avg_duration = ?, trip_count = trip_count + 1, pb_trip_id = ? WHERE id = ?", (new_pb, new_avg, new_pb_trip, r['id']))
+    else:
+        conn.execute("INSERT INTO routines (start_location_id, end_location_id, pb_duration, avg_duration, trip_count, pb_trip_id) VALUES (?, ?, ?, ?, 1, ?)", (start_loc_id, end_loc_id, duration, duration, trip_id))
+    conn.commit()

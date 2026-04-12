@@ -97,7 +97,82 @@ def api_status():
         },
         "uptime_sec": uptime_sec,
         "server_ts": time.time(),
+        "ghost": None,
     }
+
+    # Ghost Ride: Smart Prediction & PB Path Retrieval
+    active_trip = conn.execute("SELECT * FROM trips WHERE end_ts IS NULL ORDER BY id DESC LIMIT 1").fetchone()
+    if active_trip and active_trip['start_location_id']:
+        duration = time.time() - active_trip['start_ts']
+        now = datetime.fromtimestamp(time.time())
+        is_weekday = now.weekday() < 5
+        hour = now.hour
+
+        routines = conn.execute("""
+            SELECT r.*, l.lat as end_lat, l.lon as end_lon, l.name as end_name 
+            FROM routines r 
+            JOIN locations l ON r.end_location_id = l.id 
+            WHERE r.start_location_id = ?
+        """, (active_trip['start_location_id'],)).fetchall()
+        
+        if routines:
+            scored_routines = []
+            current_heading = result.get("gps", {}).get("course")
+            start_loc = conn.execute("SELECT lat, lon FROM locations WHERE id=?", (active_trip['start_location_id'],)).fetchone()
+
+            for r in routines:
+                # Base score from trip count
+                score = r['trip_count'] * 1.0
+                
+                # Temporal bias: Morning = Work, Evening = Home
+                if is_weekday:
+                    if 6 <= hour <= 11 and "work" in (r['end_name'] or "").lower():
+                        score *= 5.0
+                    if 16 <= hour <= 21 and "home" in (r['end_name'] or "").lower():
+                        score *= 5.0
+
+                # Directional bias: If heading matches bearing to destination
+                if current_heading is not None and start_loc:
+                    bearing = _calculate_bearing(start_loc['lat'], start_loc['lon'], r['end_lat'], r['end_lon'])
+                    diff = abs(current_heading - bearing) % 360
+                    if diff > 180: diff = 360 - diff
+                    if diff < 30: # Within 30 degrees
+                        score *= 3.0
+                
+                scored_routines.append({"routine": r, "score": score})
+
+            scored_routines.sort(key=lambda x: x['score'], reverse=True)
+            top = scored_routines[0]
+
+            # Fetch Ghost Path for the TOP routine with relative offsets
+            ghost_path = []
+            if top['routine']['pb_trip_id']:
+                pb_tid = top['routine']['pb_trip_id']
+                pb_trip = conn.execute("SELECT start_ts FROM trips WHERE id=?", (pb_tid,)).fetchone()
+                if pb_trip:
+                    pb_start = pb_trip['start_ts']
+                    path_rows = conn.execute(
+                        "SELECT lat, lon, ts FROM trip_routes WHERE trip_id = ? ORDER BY ts ASC",
+                        (pb_tid,)
+                    ).fetchall()
+                    ghost_path = [[p['lat'], p['lon'], int(p['ts'] - pb_start)] for p in path_rows]
+
+            # Also fetch MY current path to support mid-trip catch-up
+            my_path = []
+            if active_trip:
+                my_rows = conn.execute(
+                    "SELECT lat, lon FROM trip_routes WHERE trip_id = ? ORDER BY ts ASC",
+                    (active_trip['id'],)
+                ).fetchall()
+                my_path = [[r['lat'], r['lon']] for r in my_rows]
+
+            result["ghost"] = {
+                "routines": [dict(r) for r in routines],
+                "predicted_end_name": top['routine']['end_name'] if routines else None,
+                "current_duration": duration,
+                "ghost_path": ghost_path,
+                "current_path": my_path, # <--- NEW
+            }
 
     # Spoof data if simulation mode is on
     if os.path.exists(os.path.join(config.DATA_DIR, ".simulate_data")):
@@ -412,6 +487,40 @@ def api_gforce():
 
     response.content_type = "application/json"
     return json.dumps(points[::-1])  # oldest first for chart
+
+
+@app.route("/api/locations", method=["GET", "POST"])
+def api_locations():
+    """Get or update discovered anchor point locations."""
+    conn = db.get_connection()
+    response.content_type = "application/json"
+    
+    if request.method == "POST":
+        try:
+            data = request.json or {}
+            loc_id = data.get("id")
+            name = data.get("name", "").strip()
+            if not loc_id: return json.dumps({"status": "error", "message": "Missing ID"})
+            
+            conn.execute("UPDATE locations SET name = ? WHERE id = ?", (name, loc_id))
+            conn.commit()
+            return json.dumps({"status": "ok"})
+        except Exception as e:
+            return json.dumps({"status": "error", "message": str(e)})
+
+    # GET
+    rows = conn.execute("SELECT * FROM locations ORDER BY visit_count DESC").fetchall()
+    return json.dumps([_row_to_dict(r) for r in rows])
+
+
+def _calculate_bearing(lat1, lon1, lat2, lon2):
+    """Calculate the compass bearing between two points."""
+    y = math.sin(math.radians(lon2 - lon1)) * math.cos(math.radians(lat2))
+    x = math.cos(math.radians(lat1)) * math.sin(math.radians(lat2)) - \
+        math.sin(math.radians(lat1)) * math.cos(math.radians(lat2)) * \
+        math.cos(math.radians(lon2 - lon1))
+    bearing = math.degrees(math.atan2(y, x))
+    return (bearing + 360) % 360
 
 
 # ─── API: Settings (Camera override) ──────────────

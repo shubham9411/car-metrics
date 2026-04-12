@@ -15,7 +15,6 @@ import config
 from storage import db
 
 logger = logging.getLogger("trip_manager")
-
 class TripManager:
     def __init__(self, gps_poller, obd_poller):
         self.gps = gps_poller
@@ -30,6 +29,8 @@ class TripManager:
         self.score = 100
         self.idle_start_ts = None
         self.total_distance = 0.0  # meters
+        self._trip_start_ts = None
+        self._start_location_id = None
 
         # Speeding detection state
         self._speeding_start_ts = None
@@ -129,6 +130,15 @@ class TripManager:
             if is_moving:
                 self.start_trip(fix)
         else:
+            # Deferred location identification if start fix was missing
+            if self._start_location_id is None and fix and fix.get("lat"):
+                self._start_location_id = db.upsert_location(fix["lat"], fix["lon"])
+                if self._start_location_id:
+                    conn = db.get_connection()
+                    conn.execute("UPDATE trips SET start_location_id = ? WHERE id = ?", (self._start_location_id, self.active_trip_id))
+                    conn.commit()
+                    logger.info(f"📍 Start Location identified (deferred): ID {self._start_location_id}")
+
             if not is_moving:
                 if self.idle_start_ts is None:
                     self.idle_start_ts = time.time()
@@ -185,12 +195,23 @@ class TripManager:
 
         conn = db.get_connection()
         cur = conn.cursor()
+        start_ts = time.time()
+        
+        # Anchor Point detection: Mark start of trip
+        start_loc_id = None
+        if lat is not None and lon is not None:
+            start_loc_id = db.upsert_location(lat, lon)
+            logger.info(f"📍 Start Location matched: ID {start_loc_id}")
+
         cur.execute(
-            "INSERT INTO trips (start_ts, start_lat, start_lon, score, is_mock) VALUES (?, ?, ?, ?, ?)",
-            (time.time(), lat, lon, self.score, is_mock)
+            "INSERT INTO trips (start_ts, start_lat, start_lon, score, is_mock, start_location_id) VALUES (?, ?, ?, ?, ?, ?)",
+            (start_ts, lat, lon, self.score, is_mock, start_loc_id)
         )
         self.active_trip_id = cur.lastrowid
+        self._trip_start_ts = start_ts
+        self._start_location_id = start_loc_id
         conn.commit()
+
         label = "🧪 Mock " if is_mock else "🚗 "
         logger.info(f"{label}Trip [{self.active_trip_id}] STARTED.")
 
@@ -213,6 +234,20 @@ class TripManager:
         self.active_trip_id = None
         self.idle_start_ts = None
         self._speeding_start_ts = None
+        
+        # Anchor Point & Routine logic
+        if lat is not None and lon is not None and self._start_location_id and self._trip_start_ts:
+            end_loc_id = db.upsert_location(lat, lon)
+            conn.execute("UPDATE trips SET end_location_id = ? WHERE id = ?", (end_loc_id, self.active_trip_id))
+            conn.commit()
+            
+            if end_loc_id != self._start_location_id:
+                duration = time.time() - self._trip_start_ts
+                db.upsert_routine(self._start_location_id, end_loc_id, duration, self.active_trip_id)
+                logger.info(f"🔄 Routine matched: {self._start_location_id} -> {end_loc_id} ({duration:.0f}s)")
+        
+        self._trip_start_ts = None
+        self._start_location_id = None
 
     def _update_route_footprint(self):
         """Samples the route to build the 'Fog of War' map decoupled from 10Hz data.
@@ -311,11 +346,14 @@ class TripManager:
         cur.execute("DELETE FROM obd_readings WHERE ts < ?", (cutoff,))
         obd_d = cur.rowcount
 
-        # Auto-purge mock data older than 1 hour
+        # Auto-purge mock data older than 1 hour (EXCLUDING PB TRIPS)
         mock_cutoff = time.time() - 3600
-        mock_trips = conn.execute(
-            "SELECT id FROM trips WHERE is_mock=1 AND start_ts < ?", (mock_cutoff,)
-        ).fetchall()
+        mock_trips = conn.execute("""
+            SELECT id FROM trips 
+            WHERE is_mock=1 
+              AND start_ts < ? 
+              AND id NOT IN (SELECT pb_trip_id FROM routines WHERE pb_trip_id IS NOT TRUE)
+        """, (mock_cutoff,)).fetchall()
 
         mock_d = 0
         for mt in mock_trips:

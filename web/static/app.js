@@ -24,10 +24,27 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
 });
 
 function onPageSwitch(page) {
-    if (page === 'images') loadImages(true);
-    if (page === 'gps') loadGps();
-    if (page === 'events') loadEvents();
-    if (page === 'trips') loadTrips();
+    if (el('pageTitle')) el('pageTitle').innerText = page.charAt(0).toUpperCase() + page.slice(1);
+
+    if (page === 'overview') {
+        // Nothing special for overview yet
+    } else if (page === 'live') {
+        if (!ghostOverviewMap) initGhostMap();
+        setTimeout(() => {
+            if (ghostOverviewMap) ghostOverviewMap.invalidateSize();
+        }, 300);
+    } else if (page === 'images') {
+        loadImages(true);
+    } else if (page === 'gps') {
+        initMap();
+        loadGpsTrack();
+    } else if (page === 'events') {
+        loadEvents();
+    } else if (page === 'trips') {
+        loadTrips();
+    } else if (page === 'locations') {
+        loadLocations();
+    }
 }
 
 // ─── Status Polling ─────────────────────────────
@@ -115,6 +132,187 @@ function updateDashboard(d) {
 
     // Events count
     el('eventCount').textContent = d.counts.events;
+
+    // Ghost Ride Mode
+    const gp = el('ghostPanel');
+    if (d.ghost && d.ghost.routines && d.ghost.routines.length > 0) {
+        gp.style.display = 'block';
+
+        // Use predicted destination name
+        el('ghostDestName').innerText = d.ghost.predicted_end_name || "Recognized Routine";
+
+        const cur = d.ghost.current_duration;
+        const top = d.ghost.routines[0];
+        const pb = top.pb_duration;
+
+        el('ghostPB').innerText = formatDuration(pb);
+        el('ghostCurrent').innerText = formatDuration(cur);
+
+        // Mirror to Live HUD Page
+        if (el('livePB')) el('livePB').innerText = formatDuration(pb);
+        if (el('liveCurrent')) el('liveCurrent').innerText = formatDuration(cur);
+        if (el('liveDestName')) el('liveDestName').innerText = d.ghost.predicted_end_name || "Recognized Routine";
+        if (el('liveStatusBadge')) el('liveStatusBadge').style.display = 'inline-block';
+        if (el('liveGhostDeltaPanel')) el('liveGhostDeltaPanel').style.display = 'flex';
+
+        // --- TEMPORAL GHOST LOGIC ---
+        let deltaSec = 0;
+        let ghostPos = null;
+
+        if (d.ghost.ghost_path && d.ghost.ghost_path.length > 0 && d.gps && d.gps.lat) {
+            const myLat = d.gps.lat;
+            const myLon = d.gps.lon;
+
+            // 1. Find the point in Ghost Path closest to my CURRENT position
+            let minVDist = Infinity;
+            let closestGhostIdx = -1;
+            d.ghost.ghost_path.forEach((p, i) => {
+                const dv = Math.sqrt(Math.pow(p[0] - myLat, 2) + Math.pow(p[1] - myLon, 2));
+                if (dv < minVDist) {
+                    minVDist = dv;
+                    closestGhostIdx = i;
+                }
+            });
+
+            if (closestGhostIdx !== -1) {
+                const ghostAtMySpot = d.ghost.ghost_path[closestGhostIdx];
+                const ghostTimeAtSpot = ghostAtMySpot[2]; // offset_s
+                deltaSec = ghostTimeAtSpot - cur;
+            }
+
+            // 2. Find where the Ghost is RIGHT NOW (at time 'cur')
+            let closestTimeIdx = -1;
+            let minTDiff = Infinity;
+            d.ghost.ghost_path.forEach((p, i) => {
+                const dt = Math.abs(p[2] - cur);
+                if (dt < minTDiff) {
+                    minTDiff = dt;
+                    closestTimeIdx = i;
+                }
+            });
+            if (closestTimeIdx !== -1) {
+                ghostPos = [d.ghost.ghost_path[closestTimeIdx][0], d.ghost.ghost_path[closestTimeIdx][1]];
+            }
+        }
+
+        const deltaEl = el('ghostDelta');
+        const liveDeltaEl = el('liveGhostDelta');
+        const formattedDelta = (deltaSec >= 0 ? "+" : "-") + formatDuration(Math.abs(deltaSec));
+
+        if (deltaEl) deltaEl.innerText = formattedDelta;
+        if (liveDeltaEl) liveDeltaEl.innerText = formattedDelta;
+
+        const isAhead = deltaSec >= 0;
+        const deltaClass = isAhead ? 'ghost-value-large delta-faster' : 'ghost-value-large delta-slower';
+        const labelText = isAhead ? "Ghost Lead" : "Ghost Ahead";
+
+        if (deltaEl) {
+            deltaEl.className = deltaClass;
+            const lbl = deltaEl.parentElement.querySelector('.ghost-label');
+            if (lbl) lbl.innerText = labelText;
+        }
+        if (liveDeltaEl) {
+            liveDeltaEl.className = 'val ' + (isAhead ? 'delta-faster' : 'delta-slower');
+            if (el('liveGhostLabel')) el('liveGhostLabel').innerText = labelText;
+        }
+
+        // --- DASHBOARD GHOST MAP GHOST-ONLY LAYERS ---
+        if (ghostOverviewMap) {
+            // Update Full Ghost Line (PB)
+            if (d.ghost.ghost_path && d.ghost.ghost_path.length > 0) {
+                if (ghostLinePB) ghostLinePB.setLatLngs(d.ghost.ghost_path.map(p => [p[0], p[1]]));
+            }
+
+            // Update Ghost Rival Marker
+            if (ghostPos) {
+                if (!ghostRivalMarker) {
+                    const rivalIcon = L.divIcon({
+                        className: '',
+                        html: '<div style="width:16px;height:16px;background:#c084fc;border:3px solid #fff;border-radius:50%;box-shadow:0 0 10px #c084fc"></div>',
+                        iconSize: [16, 16],
+                        iconAnchor: [8, 8]
+                    });
+                    ghostRivalMarker = L.marker(ghostPos, { icon: rivalIcon, zIndexOffset: 500 }).addTo(ghostOverviewMap);
+                } else {
+                    ghostRivalMarker.setLatLng(ghostPos);
+                }
+            }
+        }
+    } else {
+        if (gp) gp.style.display = 'none';
+        if (el('liveStatusBadge')) el('liveStatusBadge').style.display = 'none';
+        if (el('liveGhostDeltaPanel')) el('liveGhostDeltaPanel').style.display = 'none';
+        if (el('liveDestName')) el('liveDestName').innerText = "Scanning...";
+
+        if (ghostRivalMarker) {
+            if (ghostOverviewMap) ghostOverviewMap.removeLayer(ghostRivalMarker);
+            ghostRivalMarker = null;
+        }
+    }
+
+    // --- GPS DATA COLLECTION (ALWAYS ON) ---
+    if (d.gps && d.gps.lat) {
+        const curPt = [d.gps.lat, d.gps.lon];
+
+        // CATCH-UP LOGIC: If server has a longer path, use it
+        if (d.ghost && d.ghost.current_path && d.ghost.current_path.length > ghostCurrentPoints.length) {
+            ghostCurrentPoints = d.ghost.current_path;
+        } else {
+            // Otherwise, standard append
+            if (ghostCurrentPoints.length === 0 ||
+                ghostCurrentPoints[ghostCurrentPoints.length - 1][0] !== curPt[0] ||
+                ghostCurrentPoints[ghostCurrentPoints.length - 1][1] !== curPt[1]) {
+                ghostCurrentPoints.push(curPt);
+                if (ghostCurrentPoints.length > 2000) ghostCurrentPoints.shift();
+            }
+        }
+        updateMapPosition(d.gps.lat, d.gps.lon);
+    }
+
+    // --- HUD MAP UPDATES ---
+    if (currentPage === 'live' && !ghostOverviewMap) {
+        initGhostMap();
+    }
+
+    if (ghostOverviewMap && d.gps && d.gps.lat) {
+        const curPt = [d.gps.lat, d.gps.lon];
+
+        // Update HUD trail
+        if (ghostLineCurrent) ghostLineCurrent.setLatLngs(ghostCurrentPoints);
+
+        // Update Live Car Marker
+        if (!liveCarMarker) {
+            const carIcon = L.divIcon({
+                className: '',
+                html: '<div style="width:16px;height:16px;background:#38bdf8;border:3px solid #fff;border-radius:50%;box-shadow:0 0 10px #38bdf8"></div>',
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
+            });
+            liveCarMarker = L.marker(curPt, { icon: carIcon, zIndexOffset: 1000 }).addTo(ghostOverviewMap);
+        } else {
+            liveCarMarker.setLatLng(curPt);
+        }
+
+        // Auto-center
+        if (currentPage === 'live') {
+            ghostOverviewMap.setView(curPt);
+        }
+    }
+
+    // Mirror Speed/RPM to Live HUD
+    if (d.obd) {
+        if (d.obd.SPEED && el('liveSpeed')) el('liveSpeed').innerText = d.obd.SPEED.value;
+        if (d.obd.RPM && el('liveRPM')) el('liveRPM').innerText = d.obd.RPM.value;
+    }
+
+    // End of updateDashboard
+}
+
+function formatDuration(sec) {
+    if (!sec && sec !== 0) return "--:--";
+    const m = Math.floor(Math.abs(sec) / 60);
+    const s = Math.floor(Math.abs(sec) % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
 // ─── G-Force Chart (Chart.js) ──────────────────────────────
@@ -280,6 +478,14 @@ let gpsTrackLine = null;
 let gpsMapInitialized = false;
 let gpsBoundsSet = false;
 let fogLayer = null;
+let ghostPolyline = null;
+let ghostOverviewMap = null;
+let ghostLinePB = null;
+let ghostLineCurrent = null; // HUD map Current Path
+let gpsLineCurrent = null;   // Global map Current Path
+let ghostRivalMarker = null;
+let liveCarMarker = null;
+let ghostCurrentPoints = [];
 
 /**
  * L.FogLayer: A custom canvas layer for Fog of War.
@@ -343,6 +549,66 @@ L.FogLayer = L.Layer.extend({
     }
 });
 
+// End of G-Force Layer
+
+// ─── Locations ───────────────────────────────────
+async function loadLocations() {
+    const grid = el('locationsGrid');
+    if (!grid) return;
+
+    try {
+        const r = await fetch('/api/locations');
+        const locs = await r.json();
+
+        el('locationsEmpty').style.display = locs.length === 0 ? 'block' : 'none';
+        grid.innerHTML = '';
+
+        locs.forEach(l => {
+            const card = document.createElement('div');
+            card.className = 'data-item glass';
+            card.style.display = 'flex';
+            card.style.flexDirection = 'column';
+            card.style.gap = '12px';
+            card.style.padding = '20px';
+
+            card.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <label style="margin:0">Location #${l.id}</label>
+                    <span style="font-size:0.75rem; color:var(--text-dim)">${l.visit_count} visits</span>
+                </div>
+                <div style="display:flex; gap:8px;">
+                    <input type="text" value="${l.name || ''}" placeholder="Name (e.g. Home)" 
+                        style="background:rgba(0,0,0,0.3); border:1px solid var(--border); color:var(--text-pure); padding:8px 12px; border-radius:8px; flex-grow:1; font-family:var(--font-ui);">
+                    <button class="nav-btn" style="padding:8px; border-radius:8px; background:var(--neon-blue); color:white;" onclick="renameLocation(${l.id}, this.previousElementSibling.value)">
+                        <i class="ph ph-check"></i>
+                    </button>
+                </div>
+                <div style="font-size:0.75rem; color:var(--text-dim); font-family:var(--font-data);">
+                    ${l.lat.toFixed(4)}, ${l.lon.toFixed(4)}
+                </div>
+            `;
+            grid.appendChild(card);
+        });
+    } catch (e) {
+        console.error("Error loading locations:", e);
+    }
+}
+
+async function renameLocation(id, name) {
+    try {
+        await fetch('/api/locations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, name })
+        });
+        loadLocations();
+        // and refresh dashboard in case it was showing this loc
+        fetchStatus();
+    } catch (e) {
+        console.error("Error renaming location:", e);
+    }
+}
+
 function initMap() {
     if (gpsMapInitialized) return;
     const mapEl = document.getElementById('gpsMap');
@@ -357,20 +623,84 @@ function initMap() {
         maxZoom: 19, subdomains: 'abcd',
     }).addTo(gpsMap);
 
+    // Historical Tracks (Blue)
+    gpsTrackLine = L.polyline([], {
+        color: '#3b82f6',
+        weight: 2,
+        opacity: 0.5
+    }).addTo(gpsMap);
+
     // Initialize Fog of War
     fogLayer = new L.FogLayer([]).addTo(gpsMap);
+
+    // Current Trip Trail (Global)
+    gpsLineCurrent = L.polyline([], {
+        color: '#38bdf8',
+        weight: 4,
+        opacity: 0.8,
+        lineCap: 'round'
+    }).addTo(gpsMap);
+
+    // Initialize Ghost Line (PB path) - EMPTY for Global
+    ghostPolyline = L.polyline([], {
+        color: '#c084fc',
+        weight: 2,
+        opacity: 0.2
+    }).addTo(gpsMap);
 
     const markerIcon = L.divIcon({
         className: '',
         html: '<div style="width:14px;height:14px;background:#3b82f6;border:3px solid #fff;border-radius:50%;box-shadow:0 0 10px #3b82f680"></div>',
-        iconSize: [14, 14], iconAnchor: [7, 7],
+        iconSize: [14, 14],
+        iconAnchor: [7, 7]
     });
-
     gpsMarker = L.marker([0, 0], { icon: markerIcon }).addTo(gpsMap);
-    gpsTrackLine = L.polyline([], { color: '#3b82f6', weight: 4, opacity: 0.8 }).addTo(gpsMap);
-
     gpsMapInitialized = true;
-    loadGpsTrack();
+}
+
+function initGhostMap() {
+    const el = document.getElementById('ghostOverviewMap');
+    if (!el || ghostOverviewMap) return;
+
+    // Small hack to ensure container visibility
+    if (el.clientWidth === 0 || el.clientHeight === 0) {
+        console.warn("initGhostMap: Container has no size, delaying init.");
+        return;
+    }
+
+    try {
+        ghostOverviewMap = L.map('ghostOverviewMap', {
+            zoomControl: true,
+            attributionControl: false,
+            dragging: true,
+            scrollWheelZoom: true,
+            touchZoom: true,
+            doubleClickZoom: true
+        }).setView([37.7749, -122.4194], 16);
+
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            maxZoom: 19, subdomains: 'abcd',
+        }).addTo(ghostOverviewMap);
+
+        // Personal Best Path (Ghost)
+        ghostLinePB = L.polyline([], {
+            color: '#c084fc',
+            weight: 6,
+            opacity: 0.4,
+            dashArray: '10, 15',
+            lineCap: 'round'
+        }).addTo(ghostOverviewMap);
+
+        // Current Trip Path
+        ghostLineCurrent = L.polyline([], {
+            color: '#38bdf8',
+            weight: 4,
+            opacity: 1,
+            lineCap: 'round'
+        }).addTo(ghostOverviewMap);
+    } catch (e) {
+        console.error("Leaflet init error:", e);
+    }
 }
 
 function updateMapPosition(lat, lon) {
@@ -378,7 +708,9 @@ function updateMapPosition(lat, lon) {
     const latlng = L.latLng(lat, lon);
     gpsMarker.setLatLng(latlng);
     gpsMap.setView(latlng, Math.max(gpsMap.getZoom(), 14));
-    el('mapInfo').textContent = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+
+    // Update live trail on Global Map
+    if (gpsLineCurrent) gpsLineCurrent.setLatLngs(ghostCurrentPoints);
 
     // Live fog reveal: Add current point to the latest trip in fogLayer
     if (fogLayer && fogLayer._paths.length > 0) {

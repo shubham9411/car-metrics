@@ -114,14 +114,32 @@ class OBDPoller:
         return callback
 
     async def run(self):
-        """Start the OBD async connection and keep it alive."""
+        """Main loop for reading OBD data."""
         self._running = True
-
+        sim_file = os.path.join(config.DATA_DIR, ".simulate_data")
+        
         while self._running:
-            if self._connection is None:
-                self._init_connection()
+            if os.path.exists(sim_file):
+                # GENERATE MOCK OBD DATA
+                rpm = self.get_rpm()
+                fix = self.gps.last_fix if self.gps else None
+                speed = (fix["speed_knots"] * 1.852) if fix else 0.0
+                
+                self._latest_values = {
+                    "RPM": {"value": rpm, "unit": "RPM", "ts": time.time()},
+                    "SPEED": {"value": speed, "unit": "km/h", "ts": time.time()},
+                    "COOLANT_TEMP": {"value": 90 + math.sin(time.time()/100)*2, "unit": "degC", "ts": time.time()},
+                    "CONTROL_MODULE_VOLTAGE": {"value": 14.2, "unit": "V", "ts": time.time()},
+                }
+                await asyncio.sleep(1)
+                continue
 
-            if self._connection and self._connection.is_connected():
+            # REAL CONNECTION LOGIC
+            if not self._connection or not self._connection.is_connected():
+                await asyncio.get_event_loop().run_in_executor(None, self._init_connection)
+                if not self._connection or not self._connection.is_connected():
+                    await asyncio.sleep(10)
+                    continue
                 self._connection.start()
                 logger.info("OBD2 async polling started")
 

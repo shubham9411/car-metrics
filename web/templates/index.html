@@ -523,6 +523,79 @@
                 font-size: 2.2rem;
             }
         }
+
+        /* ─── Ghost Ride HUD ─── */
+        .ghost-panel {
+            margin-top: 24px;
+            display: none;
+            border: 1px solid rgba(192, 132, 252, 0.2);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .ghost-panel::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+            background: var(--neon-purple);
+        }
+
+        .ghost-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+
+        .ghost-chip {
+            background: rgba(192, 132, 252, 0.15);
+            color: var(--neon-purple);
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border: 1px solid rgba(192, 132, 252, 0.3);
+        }
+
+        .ghost-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 30px;
+        }
+
+        .ghost-main-stat {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .ghost-label {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+
+        .ghost-value-large {
+            font-family: var(--font-data);
+            font-size: 2.4rem;
+            font-weight: 700;
+            letter-spacing: -1px;
+        }
+
+        .delta-faster {
+            color: var(--neon-green);
+            text-shadow: 0 0 15px rgba(52, 211, 153, 0.3);
+        }
+
+        .delta-slower {
+            color: var(--neon-red);
+            text-shadow: 0 0 15px rgba(244, 63, 94, 0.3);
+        }
     </style>
 </head>
 
@@ -536,8 +609,11 @@
             </div>
 
             <nav class="nav-menu">
-                <button class="nav-btn active" data-page="dashboard">
-                    <i class="ph ph-gauge"></i> Overview
+                <button class="nav-btn active" data-page="overview">
+                    <i class="ph ph-squares-four"></i> Overview
+                </button>
+                <button class="nav-btn" data-page="live">
+                    <i class="ph ph-speedometer"></i> Live HUD
                 </button>
                 <button class="nav-btn" data-page="imu">
                     <i class="ph ph-activity"></i> IMU & Env
@@ -550,6 +626,9 @@
                 </button>
                 <button class="nav-btn" data-page="trips">
                     <i class="ph ph-flag-checkered"></i> Recent Trips
+                </button>
+                <button class="nav-btn" data-page="locations">
+                    <i class="ph ph-map-pin"></i> My Locations
                 </button>
                 <button class="nav-btn" data-page="images">
                     <i class="ph ph-camera"></i> Camera
@@ -591,8 +670,8 @@
                 </div>
             </div>
 
-            <!-- Dashboard Page -->
-            <div class="page active" id="page-dashboard">
+            <!-- Overview Page -->
+            <div class="page active" id="page-overview">
                 <div class="metrics-grid">
                     <div class="widget glass">
                         <i class="ph ph-gauge icon-ring"></i>
@@ -628,6 +707,79 @@
                     </div>
                     <div class="chart-wrap">
                         <canvas id="gforceChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live HUD Page (Dedicated Current Trip) -->
+            <div class="page" id="page-live">
+                <div class="panel-header" style="margin-bottom: 20px;">
+                    <div id="liveStatusBadge" class="status-badge"
+                        style="display:none; background: var(--neon-purple); border-color: var(--neon-purple);">
+                        <i class="ph ph-ghost"></i> GHOST COMPETITION ACTIVE
+                    </div>
+                </div>
+
+                <div class="metrics-grid"
+                    style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 20px;">
+                    <div class="data-item glass highlight-item">
+                        <label>Speed (KPH)</label>
+                        <div class="val" id="liveSpeed" style="font-size: 3.5rem; color: var(--neon-blue);">0</div>
+                    </div>
+                    <div class="data-item glass highlight-item" id="liveGhostDeltaPanel" style="display:none;">
+                        <label id="liveGhostLabel">Ghost Lead</label>
+                        <div class="val" id="liveGhostDelta" style="font-size: 3.5rem; color: var(--neon-purple);">
+                            +00:00</div>
+                    </div>
+                    <div class="data-item glass">
+                        <label>Engine RPM</label>
+                        <div class="val" id="liveRPM">--</div>
+                    </div>
+                </div>
+
+                <div class="panel glass" style="padding: 0; overflow: hidden; height: 500px; position:relative;">
+                    <div id="ghostOverviewMap" style="height: 100%; width: 100%;"></div>
+
+                    <!-- Floating Destination HUD -->
+                    <div
+                        style="position:absolute; top:20px; right:20px; z-index:1000; background:rgba(0,0,0,0.8); padding:15px 20px; border-radius:12px; border:1px solid var(--neon-purple); backdrop-filter:blur(10px);">
+                        <div
+                            style="color:var(--text-dim); font-size:0.75rem; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">
+                            Target</div>
+                        <div id="liveDestName" style="color:var(--text-pure); font-weight:bold; font-size:1.2rem;">
+                            Scanning...</div>
+                        <div style="display:flex; gap:15px; margin-top:10px;">
+                            <div>
+                                <div style="color:var(--text-dim); font-size:0.6rem;">Personal Best</div>
+                                <div id="livePB" style="color:var(--neon-blue); font-family:var(--font-data);">--:--
+                                </div>
+                            </div>
+                            <div>
+                                <div style="color:var(--text-dim); font-size:0.6rem;">Current</div>
+                                <div id="liveCurrent" style="color:var(--text-pure); font-family:var(--font-data);">
+                                    --:--</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- My Locations Page -->
+            <div class="page" id="page-locations">
+                <div class="panel glass">
+                    <div class="panel-header">
+                        <div class="panel-title">Anchor Point Index</div>
+                        <p style="color:var(--text-dim); font-size:0.85rem">Tag frequent locations to enable smarter
+                            Ghost predictions.</p>
+                    </div>
+                    <div id="locationsEmpty"
+                        style="display:none; text-align:center; color:var(--text-dim); padding:40px;">
+                        <i class="ph ph-map-trifold" style="font-size:3rem; opacity:0.5; margin-bottom:10px;"></i>
+                        <h3>Exploring the World...</h3>
+                        <p>Keep driving to discover Anchor Points.</p>
+                    </div>
+                    <div class="data-list" id="locationsGrid">
+                        <!-- Populated dynamically -->
                     </div>
                 </div>
             </div>
