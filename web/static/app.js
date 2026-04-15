@@ -251,61 +251,66 @@ function updateDashboard(d) {
     }
 
     // --- GPS DATA COLLECTION (ALWAYS ON) ---
+    let fullCurrentPath = [];
     if (d.gps && d.gps.lat) {
-        const curPt = [d.gps.lat, d.gps.lon];
-
-        // CATCH-UP LOGIC: If server has a longer path, use it
-        if (d.ghost && d.ghost.current_path && d.ghost.current_path.length > ghostCurrentPoints.length) {
-            ghostCurrentPoints = d.ghost.current_path;
+        if (d.ghost && d.ghost.current_path && d.ghost.current_path.length > 0) {
+            fullCurrentPath = d.ghost.current_path;
         } else {
-            // Otherwise, standard append
-            if (ghostCurrentPoints.length === 0 ||
-                ghostCurrentPoints[ghostCurrentPoints.length - 1][0] !== curPt[0] ||
-                ghostCurrentPoints[ghostCurrentPoints.length - 1][1] !== curPt[1]) {
-                ghostCurrentPoints.push(curPt);
-                if (ghostCurrentPoints.length > 2000) ghostCurrentPoints.shift();
-            }
+            fullCurrentPath = [[d.gps.lat, d.gps.lon]];
         }
-        updateMapPosition(d.gps.lat, d.gps.lon);
+        updateMapPosition(d.gps.lat, d.gps.lon, fullCurrentPath);
     }
 
-    // --- HUD MAP UPDATES ---
-    if (currentPage === 'live' && !ghostOverviewMap) {
-        initGhostMap();
-    }
-
-    if (ghostOverviewMap && d.gps && d.gps.lat) {
-        const curPt = [d.gps.lat, d.gps.lon];
-
-        // Update HUD trail
-        if (ghostLineCurrent) ghostLineCurrent.setLatLngs(ghostCurrentPoints);
-
-        // Update Live Car Marker
-        if (!liveCarMarker) {
-            const carIcon = L.divIcon({
-                className: '',
-                html: '<div style="width:16px;height:16px;background:#38bdf8;border:3px solid #fff;border-radius:50%;box-shadow:0 0 10px #38bdf8"></div>',
-                iconSize: [16, 16],
-                iconAnchor: [8, 8]
-            });
-            liveCarMarker = L.marker(curPt, { icon: carIcon, zIndexOffset: 1000 }).addTo(ghostOverviewMap);
-        } else {
-            liveCarMarker.setLatLng(curPt);
-        }
-
-        // Auto-center
-        if (currentPage === 'live') {
-            ghostOverviewMap.setView(curPt);
-        }
-    }
-
-    // Mirror Speed/RPM to Live HUD
+    // ─── Mirror Speed/RPM (Moved UP to guarantee execution) ───
     if (d.obd) {
         if (d.obd.SPEED && el('liveSpeed')) el('liveSpeed').innerText = d.obd.SPEED.value;
         if (d.obd.RPM && el('liveRPM')) el('liveRPM').innerText = d.obd.RPM.value;
     }
 
-    // End of updateDashboard
+    // --- HUD MAP UPDATES (FROM SCRATCH LOGIC) ---
+    if (currentPage === 'live') {
+        try {
+            // Force init if missing
+            if (!ghostOverviewMap) {
+                initGhostMap();
+            }
+
+            // If map is alive, render the backend's source-of-truth immediately
+            if (ghostOverviewMap && d.gps && d.ghost) {
+                let fullCurrentPath = [];
+                if (d.ghost.current_path && d.ghost.current_path.length > 0) {
+                    fullCurrentPath = d.ghost.current_path;
+                } else if (d.gps.lat) {
+                    fullCurrentPath = [[d.gps.lat, d.gps.lon]];
+                }
+
+                if (ghostLineCurrent && fullCurrentPath.length > 0) {
+                    ghostLineCurrent.setLatLngs(fullCurrentPath);
+                }
+
+                if (d.gps.lat) {
+                    const curPt = [d.gps.lat, d.gps.lon];
+                    if (!liveCarMarker) {
+                        const carIcon = L.divIcon({
+                            className: '',
+                            html: '<div style="width:16px;height:16px;background:#38bdf8;border:3px solid #fff;border-radius:50%;box-shadow:0 0 10px #38bdf8"></div>',
+                            iconSize: [16, 16],
+                            iconAnchor: [8, 8]
+                        });
+                        liveCarMarker = L.marker(curPt, { icon: carIcon, zIndexOffset: 1000 }).addTo(ghostOverviewMap);
+                    } else {
+                        liveCarMarker.setLatLng(curPt);
+                    }
+
+                    ghostOverviewMap.invalidateSize();
+                    ghostOverviewMap.setView(curPt);
+                }
+            }
+        } catch (e) {
+            console.error("Live HUD Map Error:", e);
+            if (el('liveDestName')) el('liveDestName').innerText = "Map Err: " + e.message.substring(0, 15);
+        }
+    }
 }
 
 function formatDuration(sec) {
@@ -703,17 +708,19 @@ function initGhostMap() {
     }
 }
 
-function updateMapPosition(lat, lon) {
+function updateMapPosition(lat, lon, currentPathArray = null) {
     if (!gpsMap || lat == null || lon == null) return;
     const latlng = L.latLng(lat, lon);
     gpsMarker.setLatLng(latlng);
     gpsMap.setView(latlng, Math.max(gpsMap.getZoom(), 14));
 
-    // Update live trail on Global Map
-    if (gpsLineCurrent) gpsLineCurrent.setLatLngs(ghostCurrentPoints);
+    // Update live trail on Global Map using the provided backend path
+    if (gpsLineCurrent && currentPathArray && currentPathArray.length > 0) {
+        gpsLineCurrent.setLatLngs(currentPathArray);
+    }
 
     // Live fog reveal: Add current point to the latest trip in fogLayer
-    if (fogLayer && fogLayer._paths.length > 0) {
+    if (fogLayer && fogLayer._paths && fogLayer._paths.length > 0) {
         const lastTrip = fogLayer._paths[fogLayer._paths.length - 1];
         lastTrip.push([lat, lon]);
         fogLayer._update();

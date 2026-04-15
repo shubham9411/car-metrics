@@ -131,6 +131,9 @@ class OBDPoller:
                     "COOLANT_TEMP": {"value": 90 + math.sin(time.time()/100)*2, "unit": "degC", "ts": time.time()},
                     "CONTROL_MODULE_VOLTAGE": {"value": 14.2, "unit": "V", "ts": time.time()},
                 }
+                # Write to DB so the web server (separate process) can read it
+                for pid, v in self._latest_values.items():
+                    db.insert_obd_reading({"ts": v["ts"], "pid": pid, "value": v["value"], "unit": v["unit"]})
                 await asyncio.sleep(1)
                 continue
 

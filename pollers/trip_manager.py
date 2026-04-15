@@ -231,11 +231,7 @@ class TripManager:
         )
         conn.commit()
 
-        self.active_trip_id = None
-        self.idle_start_ts = None
-        self._speeding_start_ts = None
-        
-        # Anchor Point & Routine logic
+        # Anchor Point & Routine logic (must run BEFORE clearing active_trip_id)
         if lat is not None and lon is not None and self._start_location_id and self._trip_start_ts:
             end_loc_id = db.upsert_location(lat, lon)
             conn.execute("UPDATE trips SET end_location_id = ? WHERE id = ?", (end_loc_id, self.active_trip_id))
@@ -245,7 +241,10 @@ class TripManager:
                 duration = time.time() - self._trip_start_ts
                 db.upsert_routine(self._start_location_id, end_loc_id, duration, self.active_trip_id)
                 logger.info(f"🔄 Routine matched: {self._start_location_id} -> {end_loc_id} ({duration:.0f}s)")
-        
+
+        self.active_trip_id = None
+        self.idle_start_ts = None
+        self._speeding_start_ts = None
         self._trip_start_ts = None
         self._start_location_id = None
 

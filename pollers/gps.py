@@ -117,44 +117,64 @@ class GPSPoller:
         logger.info("GPS poller started")
 
         sim_file = os.path.join(config.DATA_DIR, ".simulate_data")
-        
-        # State for advanced simulation
-        sim_lat = 37.7749
-        sim_lon = -122.4194
-        sim_heading = 0.0
-        sim_speed_knots = 0.0
-        sim_alt = 15.0
+
+        # Fixed waypoint route through SF (loops indefinitely).
+        # Each entry is (lat, lon). The mock GPS moves between these points
+        # at a realistic speed so every mock run follows the SAME path —
+        # essential for reproducible Ghost Ride testing.
+        MOCK_ROUTE = [
+            (37.7751, -122.4193),  # Start — near Civic Center
+            (37.7751, -122.4175),  # East on Market St
+            (37.7745, -122.4175),  # South on 10th St
+            (37.7730, -122.4175),  # Continue south
+            (37.7720, -122.4175),  # South Van Ness / 13th
+            (37.7720, -122.4200),  # West on 13th St
+            (37.7720, -122.4225),  # Continue west
+            (37.7720, -122.4250),  # Guerrero St
+            (37.7735, -122.4263),  # North on Guerrero
+            (37.7751, -122.4263),  # Back north alongside Duboce Park
+            (37.7765, -122.4263),  # Continue north
+            (37.7765, -122.4240),  # East on Oak St
+            (37.7765, -122.4215),  # Continue east
+            (37.7765, -122.4193),  # Back to Civic Center area (N)
+            (37.7751, -122.4193),  # Close loop
+        ]
+        sim_wp_idx = 0
+        sim_lat    = MOCK_ROUTE[0][0]
+        sim_lon    = MOCK_ROUTE[0][1]
+        SIM_SPEED_KMH = 35.0  # fixed cruise speed for the mock route
 
         while self._running:
             try:
                 if os.path.exists(sim_file):
                     t = time.time()
-                    
-                    # Random road decisions: occasionally turn 90 degrees
-                    if time.time() % 30 < 1.0: # Every ~30s maybe turn
-                         decision = random.choice([0, 90, -90])
-                         sim_heading = (sim_heading + decision) % 360
-                    
-                    # Target speed varies (0 to 60 kph)
-                    target_speed = 30.0 + math.sin(t / 20) * 20.0
-                    # Braking events (sudden drops)
-                    if (t % 45) < 3.0: target_speed = 0.0
-                    
-                    # Accelerate/Brake towards target
-                    sim_speed_knots = sim_speed_knots * 0.9 + (target_speed / 1.852) * 0.1
-                    
-                    # Move vehicle (1 knot = 1.852 km/h ≈ 0.514 m/s)
-                    dist_m = (sim_speed_knots * 0.514) * 1.0 # 1s poll
-                    rad = math.radians(sim_heading)
-                    sim_lat += (dist_m * math.cos(rad)) / 111000.0
-                    sim_lon += (dist_m * math.sin(rad)) / (111000.0 * math.cos(math.radians(sim_lat)))
-                    
-                    # Change altitude gradually
-                    sim_alt += math.sin(t / 50) * 0.2
-                    
+
+                    # Move toward the current waypoint
+                    target_lat, target_lon = MOCK_ROUTE[sim_wp_idx]
+                    dlat = target_lat - sim_lat
+                    dlon = target_lon - sim_lon
+                    dist_deg = math.hypot(dlat, dlon)
+
+                    step_m = (SIM_SPEED_KMH / 3.6) * 1.0  # metres per 1-s tick
+                    step_deg = step_m / 111_000.0          # approx deg per metre
+
+                    if dist_deg <= step_deg:
+                        # Reached waypoint — snap to it and advance
+                        sim_lat, sim_lon = target_lat, target_lon
+                        sim_wp_idx = (sim_wp_idx + 1) % len(MOCK_ROUTE)
+                    else:
+                        # Advance fraction toward waypoint
+                        frac = step_deg / dist_deg
+                        sim_lat += dlat * frac
+                        sim_lon += dlon * frac
+
+                    heading = math.degrees(math.atan2(dlon, dlat)) % 360
                     fix = {
-                        "ts": t, "lat": sim_lat, "lon": sim_lon, "alt": sim_alt,
-                        "speed_knots": sim_speed_knots, "course": sim_heading,
+                        "ts": t,
+                        "lat": sim_lat, "lon": sim_lon,
+                        "alt": 15.0 + math.sin(t / 30) * 3,
+                        "speed_knots": SIM_SPEED_KMH / 1.852,
+                        "course": heading,
                         "satellites": 12, "fix_quality": 1
                     }
                     self._has_satellite_fix = True
