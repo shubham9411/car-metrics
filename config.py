@@ -25,6 +25,12 @@ IMU_POLL_HZ = int(os.environ.get("CM_IMU_HZ", "10"))
 IMU_BATCH_SIZE = 10  # rows buffered before SQLite insert
 
 # ──────────────────────────────────────────────
+# BME680 (Environmental Sensor) — I2C
+# ──────────────────────────────────────────────
+BME680_ADDR = 0x76
+BME680_POLL_SEC = int(os.environ.get("CM_BME680_POLL_SEC", "5"))
+
+# ──────────────────────────────────────────────
 # GPS (NEO-8M) — UART
 # ──────────────────────────────────────────────
 GPS_SERIAL_PORT = os.environ.get("CM_GPS_PORT", "/dev/serial0")

@@ -72,6 +72,11 @@ echo "→ Installing python-obd (may build from source)..."
 "${VENV_DIR}/bin/pip" install git+https://github.com/brendan-w/python-OBD.git 2>/dev/null || \
 echo "  ⚠ python-obd install failed — OBD2 will be disabled. Install manually later."
 
+# BME680 environmental sensor
+echo "→ Installing BME680 library..."
+"${VENV_DIR}/bin/pip" install bme680 2>/dev/null || \
+echo "  ⚠ bme680 install failed — Environmental sensor will be disabled."
+
 # Setup Bluetooth for OBD2 ELM327
 echo "→ Setting up Bluetooth serial..."
 # User needs to pair their ELM327 first:
@@ -104,7 +109,7 @@ echo ""
 echo "Next steps:"
 echo "  1. Reboot: sudo reboot"
 echo "  2. Verify I2C: sudo i2cdetect -y 1"
-echo "     - Should see 0x68 (MPU6050) and 0x77 (BMP180)"
+echo "     - Should see 0x68 (MPU6050), 0x76 (BME680), 0x77 (BMP180)"
 echo "  3. Pair Bluetooth ELM327:"
 echo "     sudo bluetoothctl → scan on → pair XX:XX → trust XX:XX → quit"
 echo "     sudo rfcomm bind 0 XX:XX:XX:XX:XX:XX"

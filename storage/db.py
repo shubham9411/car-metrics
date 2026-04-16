@@ -161,6 +161,18 @@ def _init_schema(conn: sqlite3.Connection):
             FOREIGN KEY(start_location_id) REFERENCES locations(id),
             FOREIGN KEY(end_location_id) REFERENCES locations(id)
         );
+
+        CREATE TABLE IF NOT EXISTS env_readings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts REAL NOT NULL,
+            temperature REAL,
+            humidity REAL,
+            pressure REAL,
+            gas_resistance REAL,
+            gas_baseline REAL,
+            iaq_score REAL,
+            synced INTEGER DEFAULT 0
+        );
     """)
 
     # Safe schema migrations for existing local databases
@@ -181,12 +193,11 @@ def _init_schema(conn: sqlite3.Connection):
         except sqlite3.OperationalError:
             pass
 
-    # Phase 6 migrations
-    for tbl, col, default in [("trips", "is_mock", "0"), ("events", "trip_id", "NULL")]:
-        try:
-            conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} INTEGER DEFAULT {default}")
-        except sqlite3.OperationalError:
-            pass
+    # BME680 migrations
+    try:
+        conn.execute("ALTER TABLE env_readings ADD COLUMN gas_baseline REAL")
+    except sqlite3.OperationalError:
+        pass
 
     # Phase 8 migrations: Ghost Ride
     for col in ["start_location_id", "end_location_id"]:
@@ -260,6 +271,17 @@ def insert_event(event: dict):
         """INSERT INTO events (ts, event_type, g_force, lat, lon, details, trip_id)
            VALUES (:ts, :event_type, :g_force, :lat, :lon, :details, :trip_id)""",
         event,
+    )
+    conn.commit()
+
+
+def insert_env_reading(reading: dict):
+    """Insert a single BME680 environmental reading."""
+    conn = get_connection()
+    conn.execute(
+        """INSERT INTO env_readings (ts, temperature, humidity, pressure, gas_resistance, iaq_score)
+           VALUES (:ts, :temperature, :humidity, :pressure, :gas_resistance, :iaq_score)""",
+        reading,
     )
     conn.commit()
 

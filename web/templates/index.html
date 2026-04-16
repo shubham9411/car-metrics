@@ -699,6 +699,54 @@
                     </div>
                 </div>
 
+                <!-- Cabin Environment (BME680) -->
+                <div class="panel glass" id="envPanel" style="margin-bottom: 20px;">
+                    <div class="panel-header">
+                        <div class="panel-title"><i class="ph ph-leaf"></i> Cabin Environment</div>
+                        <div style="font-family:var(--font-data); color:var(--text-dim); font-size:0.8rem;"
+                            id="envStatus">Waiting for sensor...</div>
+                    </div>
+                    <div class="metrics-grid"
+                        style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px;">
+                        <div class="widget glass" style="padding: 16px;">
+                            <div class="widget-title" style="font-size: 0.75rem;"><i class="ph ph-thermometer"></i>
+                                Temperature</div>
+                            <div class="widget-value" style="font-size: 2rem;" id="envTemp">--<span
+                                    class="widget-unit">°C</span></div>
+                        </div>
+                        <div class="widget glass" style="padding: 16px;">
+                            <div class="widget-title" style="font-size: 0.75rem;"><i class="ph ph-drop"></i> Humidity
+                            </div>
+                            <div class="widget-value" style="font-size: 2rem;" id="envHumidity">--<span
+                                    class="widget-unit">%</span></div>
+                        </div>
+                        <div class="widget glass" style="padding: 16px;">
+                            <div class="widget-title" style="font-size: 0.75rem;"><i class="ph ph-waves"></i> Pressure
+                            </div>
+                            <div class="widget-value" style="font-size: 2rem;" id="envPressure">--<span
+                                    class="widget-unit">hPa</span></div>
+                        </div>
+                        <div class="widget glass" style="padding: 16px;">
+                            <div class="widget-title" style="font-size: 0.75rem;"><i class="ph ph-wind"></i> Air Quality
+                            </div>
+                            <div class="widget-value" style="font-size: 2rem;" id="envIAQ">--<span class="widget-unit"
+                                    id="envIAQLabel">IAQ</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Environmental Trends Chart -->
+                <div class="panel glass" id="envChartPanel" style="margin-bottom: 20px;">
+                    <div class="panel-header">
+                        <div class="panel-title"><i class="ph ph-chart-line"></i> Environmental Trends</div>
+                        <div style="font-family:var(--font-data); color:var(--text-dim); font-size:0.85rem;"
+                            id="envChartInfo">-- pts</div>
+                    </div>
+                    <div class="chart-wrap" style="height: 300px;">
+                        <canvas id="envChart"></canvas>
+                    </div>
+                </div>
+
                 <!-- Enhanced Chart -->
                 <div class="panel glass">
                     <div class="panel-header">

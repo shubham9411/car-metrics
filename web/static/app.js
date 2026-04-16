@@ -7,6 +7,9 @@ const REFRESH_MS = 3000;   // status refresh
 const IMG_REFRESH_MS = 10000;  // image list refresh
 let currentPage = 'dashboard';
 let imgPage = 0;
+let envData = [];
+let envChartInstance = null;
+let lastEnvFetch = 0;
 
 // ─── Tab Navigation ─────────────────────────────
 
@@ -55,6 +58,7 @@ async function fetchStatus() {
         const d = await res.json();
         updateDashboard(d);
         document.getElementById('statusDot').className = 'status-dot';
+
     } catch (e) {
         document.getElementById('statusDot').className = 'status-dot offline';
     }
@@ -132,6 +136,33 @@ function updateDashboard(d) {
 
     // Events count
     el('eventCount').textContent = d.counts.events;
+
+    // Cabin Environment (BME680)
+    if (d.env) {
+        const e = d.env;
+        el('envTemp').innerHTML = e.temperature != null ? e.temperature.toFixed(1) + '<span class="widget-unit">°C</span>' : '--';
+        el('envHumidity').innerHTML = e.humidity != null ? e.humidity.toFixed(1) + '<span class="widget-unit">%</span>' : '--';
+        el('envPressure').innerHTML = e.pressure != null ? e.pressure.toFixed(1) + '<span class="widget-unit">hPa</span>' : '--';
+
+        if (e.iaq_score != null) {
+            const iaq = e.iaq_score;
+            let label, color;
+            if (iaq <= 50) { label = 'Good'; color = '#34d399'; }
+            else if (iaq <= 100) { label = 'OK'; color = '#a3e635'; }
+            else if (iaq <= 200) { label = 'Moderate'; color = '#facc15'; }
+            else if (iaq <= 300) { label = 'Poor'; color = '#fb923c'; }
+            else { label = 'Bad'; color = '#f43f5e'; }
+            el('envIAQ').innerHTML = Math.round(iaq) + '<span class="widget-unit" style="color:' + color + '"> ' + label + '</span>';
+            el('envIAQ').style.color = color;
+        } else {
+            el('envIAQ').innerHTML = '<span class="widget-unit" style="font-size:1.1rem; color:var(--text-dim)">Calibrating...</span>';
+            el('envIAQ').style.color = 'var(--text-dim)';
+        }
+
+        let statusText = d.counts.env_readings + ' readings';
+        if (e.gas_baseline) statusText += ` | Baseline: ${Math.round(e.gas_baseline / 1000)}kΩ`;
+        el('envStatus').textContent = statusText;
+    }
 
     // Ghost Ride Mode
     const gp = el('ghostPanel');
@@ -411,6 +442,115 @@ function initOrUpdateChart() {
             }
         }
     });
+}
+
+async function updateEnvHistory() {
+    console.log("Fetching env history...");
+    try {
+        const res = await fetch('/api/env/history?limit=120');
+        envData = await res.json();
+        console.log(`Loaded ${envData.length} env points`);
+        initOrUpdateEnvChart();
+    } catch (e) {
+        console.error("Failed to load env history", e);
+    }
+}
+
+function initOrUpdateEnvChart() {
+    const canvas = document.getElementById('envChart');
+    if (!canvas) {
+        console.error("CRITICAL: envChart canvas NOT found in DOM");
+        return;
+    }
+
+    if (envData.length === 0) {
+        console.warn("No env data points to render");
+        el('envChartInfo').textContent = "No data";
+        return;
+    }
+
+    const ctx = canvas.getContext('2d');
+    const labels = envData.map(d => {
+        let date = new Date(d.ts * 1000);
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    });
+
+    console.log(`Starting env chart render with ${envData.length} pts`);
+
+    try {
+        if (envChartInstance) {
+            envChartInstance.data.labels = labels;
+            envChartInstance.data.datasets[0].data = envData.map(d => d.temp);
+            envChartInstance.data.datasets[1].data = envData.map(d => d.hum);
+            envChartInstance.data.datasets[2].data = envData.map(d => d.iaq);
+            envChartInstance.update('none');
+            el('envChartInfo').textContent = `${envData.length} pts`;
+            return;
+        }
+
+        envChartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Temp (°C)',
+                        data: envData.map(d => d.temp),
+                        borderColor: '#f87171',
+                        yAxisID: 'y',
+                        tension: 0.3,
+                        pointRadius: 0
+                    },
+                    {
+                        label: 'Hum (%)',
+                        data: envData.map(d => d.hum),
+                        borderColor: '#38bdf8',
+                        yAxisID: 'y',
+                        tension: 0.3,
+                        pointRadius: 0
+                    },
+                    {
+                        label: 'IAQ',
+                        data: envData.map(d => d.iaq),
+                        borderColor: '#a3e635',
+                        yAxisID: 'y2',
+                        tension: 0.3,
+                        pointRadius: 0,
+                        backgroundColor: 'rgba(163, 230, 53, 0.05)',
+                        fill: true
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: {
+                    legend: { display: true, position: 'top', labels: { color: '#94a3b8', font: { size: 10 } } }
+                },
+                scales: {
+                    x: { ticks: { color: '#64748b', maxTicksLimit: 6 } },
+                    y: {
+                        position: 'left',
+                        ticks: { color: '#94a3b8' },
+                        grid: { color: 'rgba(255,255,255,0.05)' }
+                    },
+                    y2: {
+                        position: 'right',
+                        min: 0,
+                        suggestedMax: 200,
+                        grid: { display: false },
+                        ticks: { color: '#a3e635' }
+                    }
+                }
+            }
+        });
+        el('envChartInfo').textContent = `${envData.length} pts`;
+        console.log("Env chart initialized successfully");
+    } catch (err) {
+        console.error("FATAL: Chart rendering failed", err);
+        el('envChartInfo').textContent = "Render Error";
+    }
 }
 
 // ─── Images ─────────────────────────────────────
@@ -1035,6 +1175,12 @@ setInterval(() => {
 setInterval(() => {
     if (currentPage === 'images') loadImages(true);
 }, IMG_REFRESH_MS);
+
+// Refresh environmental history every 30s
+updateEnvHistory();
+setInterval(() => {
+    if (currentPage === 'overview' || currentPage === 'dashboard') updateEnvHistory();
+}, 30000);
 
 // ─── Toggles & Overrides ────────────────────────
 

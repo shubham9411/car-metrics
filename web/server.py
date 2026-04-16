@@ -81,6 +81,12 @@ def api_status():
     obd_count = conn.execute("SELECT COUNT(*) FROM obd_readings").fetchone()[0]
     img_count = conn.execute("SELECT COUNT(*) FROM camera_frames").fetchone()[0]
     event_count = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+    env_count = conn.execute("SELECT COUNT(*) FROM env_readings").fetchone()[0]
+
+    # Latest BME680 environmental reading
+    env = conn.execute(
+        "SELECT * FROM env_readings ORDER BY id DESC LIMIT 1"
+    ).fetchone()
 
     # System uptime
     try:
@@ -93,12 +99,14 @@ def api_status():
         "imu": _row_to_dict(imu) if imu else None,
         "gps": _row_to_dict(gps) if gps else None,
         "obd": {r["pid"]: {"value": r["value"], "unit": r["unit"], "ts": r["ts"]} for r in obd_rows},
+        "env": _row_to_dict(env) if env else None,
         "counts": {
             "imu_readings": imu_count,
             "gps_fixes": gps_count,
             "obd_readings": obd_count,
             "camera_frames": img_count,
             "events": event_count,
+            "env_readings": env_count,
         },
         "uptime_sec": uptime_sec,
         "server_ts": time.time(),
@@ -472,6 +480,28 @@ def api_gforce():
     for r in rows:
         g = math.sqrt(r["ax"] ** 2 + r["ay"] ** 2 + r["az"] ** 2)
         points.append({"ts": r["ts"], "g": round(g, 3)})
+
+    response.content_type = "application/json"
+    return json.dumps(points[::-1])  # oldest first for chart
+
+@app.route("/api/env/history")
+def api_env_history():
+    """Get recent environmental readings for charting."""
+    limit = min(int(request.query.get("limit", 120)), 1000)
+    conn = db.get_connection()
+    rows = conn.execute(
+        "SELECT ts, temperature, humidity, iaq_score FROM env_readings ORDER BY id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+
+    points = []
+    for r in rows:
+        points.append({
+            "ts": r["ts"], 
+            "temp": r["temperature"], 
+            "hum": r["humidity"], 
+            "iaq": r["iaq_score"]
+        })
 
     response.content_type = "application/json"
     return json.dumps(points[::-1])  # oldest first for chart
