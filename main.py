@@ -20,6 +20,7 @@ from pollers.camera import CameraPoller
 from pollers.obd import OBDPoller
 from pollers.bme680_poller import BME680Poller
 from pollers.trip_manager import TripManager
+from pollers.display_poller import DisplayPoller
 from utils.crash_detect import CrashDetector
 
 # ─── Logging setup ────────────────────────────────
@@ -40,6 +41,12 @@ class CarMetrics:
         self.imu = IMUPoller(gps_poller=self.gps)
         self.obd = OBDPoller(gps_poller=self.gps)
         self.bme680 = BME680Poller()
+        self.display = DisplayPoller(
+            gps_poller=self.gps,
+            obd_poller=self.obd,
+            bme680_poller=self.bme680,
+            imu_poller=self.imu,
+        )
         self.trip_manager = TripManager(self.gps, self.obd)
         self.sync_engine = SyncEngine()
         self.crash_detector = CrashDetector(on_event=self._on_crash_event)
@@ -130,6 +137,7 @@ class CarMetrics:
             asyncio.create_task(self.camera.run()),
             asyncio.create_task(self.obd.run()),
             asyncio.create_task(self.bme680.run()),
+            asyncio.create_task(self.display.run()),
             asyncio.create_task(self.trip_manager.run()),
             asyncio.create_task(self.sync_engine.run()),
             asyncio.create_task(self._heartbeat()),
@@ -151,6 +159,7 @@ class CarMetrics:
         self.camera.stop()
         self.obd.stop()
         self.bme680.stop()
+        self.display.stop()
         self.trip_manager.stop()
         self.sync_engine.stop()
         db.close()

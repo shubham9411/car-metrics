@@ -58,8 +58,17 @@ CAMERA_MAX_LOCAL_IMAGES = int(os.environ.get("CM_CAM_MAX_LOCAL", "1000"))
 # OBD2 (ELM327 Bluetooth)
 # ──────────────────────────────────────────────
 OBD_PORT = os.environ.get("CM_OBD_PORT", "/dev/rfcomm0")
-OBD_MAC = os.environ.get("CM_OBD_MAC", "AA:BB:CC:11:22:33")
+OBD_MAC  = os.environ.get("CM_OBD_MAC",  "AA:BB:CC:11:22:33")
 OBD_BAUD = int(os.environ.get("CM_OBD_BAUD", "38400"))
+
+# ──────────────────────────────────────────────
+# ST7789V 2" LCD Display — SPI
+# ──────────────────────────────────────────────
+DISPLAY_ENABLED  = os.environ.get("CM_DISPLAY", "true").lower() == "true"
+DISPLAY_DC_PIN   = int(os.environ.get("CM_DISPLAY_DC",  "25"))   # GPIO 25
+DISPLAY_RST_PIN  = int(os.environ.get("CM_DISPLAY_RST", "27"))   # GPIO 27
+DISPLAY_BL_PIN   = int(os.environ.get("CM_DISPLAY_BL",  "18"))   # GPIO 18 (PWM)
+DISPLAY_PAGE_SEC = int(os.environ.get("CM_DISPLAY_PAGE", "8"))   # seconds per page
 OBD_FAST = os.environ.get("CM_OBD_FAST", "true").lower() == "true"
 # PIDs to watch (python-obd command names)
 OBD_WATCHED_PIDS = [

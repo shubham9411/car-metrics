@@ -60,6 +60,7 @@ class IMUPoller:
         self._mag_type = None  # 'hmc', 'qmc', or None
         self._mag_addr = None
         self.gps = gps_poller
+        self.last_reading = {} 
         
         # State for IMU simulation
         self._last_sim_speed = 0.0
@@ -313,6 +314,7 @@ class IMUPoller:
             try:
                 t0 = time.monotonic()
                 reading = self.read_once()
+                self.last_reading = reading
                 
                 # Callback for crash detection (always runs for safety/triggering)
                 if on_reading:
