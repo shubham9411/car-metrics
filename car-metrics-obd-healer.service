@@ -1,0 +1,14 @@
+[Unit]
+Description=Car Metrics — OBD2 Bluetooth Healer
+After=bluetooth.service
+Requires=bluetooth.service
+
+[Service]
+Type=simple
+User=dietpi
+ExecStart=/bin/bash /home/dietpi/car-metrics/scripts/obd_healing.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

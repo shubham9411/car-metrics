@@ -155,8 +155,7 @@ function updateDashboard(d) {
             el('envIAQ').innerHTML = Math.round(iaq) + '<span class="widget-unit" style="color:' + color + '"> ' + label + '</span>';
             el('envIAQ').style.color = color;
         } else {
-            el('envIAQ').innerHTML = '<span class="widget-unit" style="font-size:1.1rem; color:var(--text-dim)">Calibrating...</span>';
-            el('envIAQ').style.color = 'var(--text-dim)';
+            el('envIAQ').innerHTML = '--<span class="widget-unit">IAQ</span>';
         }
 
         let statusText = d.counts.env_readings + ' readings';
@@ -222,7 +221,13 @@ function updateDashboard(d) {
                 }
             });
             if (closestTimeIdx !== -1) {
-                ghostPos = [d.ghost.ghost_path[closestTimeIdx][0], d.ghost.ghost_path[closestTimeIdx][1]];
+                // Apply visual offset so ghost is visible even if overlapping
+                const GHOST_LAT_OFF = 0.00015;
+                const GHOST_LON_OFF = 0.00015;
+                ghostPos = [
+                    d.ghost.ghost_path[closestTimeIdx][0] + GHOST_LAT_OFF,
+                    d.ghost.ghost_path[closestTimeIdx][1] + GHOST_LON_OFF
+                ];
             }
         }
 
@@ -249,9 +254,11 @@ function updateDashboard(d) {
 
         // --- DASHBOARD GHOST MAP GHOST-ONLY LAYERS ---
         if (ghostOverviewMap) {
-            // Update Full Ghost Line (PB)
+            // Update Full Ghost Line (PB) with offset
             if (d.ghost.ghost_path && d.ghost.ghost_path.length > 0) {
-                if (ghostLinePB) ghostLinePB.setLatLngs(d.ghost.ghost_path.map(p => [p[0], p[1]]));
+                const GHOST_LAT_OFF = 0.00015;
+                const GHOST_LON_OFF = 0.00015;
+                if (ghostLinePB) ghostLinePB.setLatLngs(d.ghost.ghost_path.map(p => [p[0] + GHOST_LAT_OFF, p[1] + GHOST_LON_OFF]));
             }
 
             // Update Ghost Rival Marker
@@ -667,6 +674,10 @@ L.FogLayer = L.Layer.extend({
         L.DomUtil.setPosition(this._canvas, pos);
 
         const ctx = this._canvas.getContext('2d');
+        ctx.clearRect(0, 0, size.x, size.y);
+
+        if (!fogEnabled) return;
+
         // Clear and fill fog
         ctx.fillStyle = 'rgba(0,0,0,0.65)';
         ctx.fillRect(0, 0, size.x, size.y);
@@ -750,7 +761,25 @@ async function renameLocation(id, name) {
         // and refresh dashboard in case it was showing this loc
         fetchStatus();
     } catch (e) {
-        console.error("Error renaming location:", e);
+    }
+}
+
+// ─── Fog of War Toggle ────────────────────────────
+let fogEnabled = localStorage.getItem('cm_fog_enabled') !== 'false';
+
+function toggleFog() {
+    fogEnabled = !fogEnabled;
+    localStorage.setItem('cm_fog_enabled', fogEnabled);
+
+    // Update UI
+    const btn = el('fogToggleBtn');
+    if (btn) {
+        btn.innerHTML = fogEnabled ? '<i class="ph ph-eye-slash"></i> Clear Fog' : '<i class="ph ph-eye"></i> Show Fog';
+        btn.classList.toggle('nav-btn-active', !fogEnabled);
+    }
+
+    if (fogLayer) {
+        fogLayer._update();
     }
 }
 

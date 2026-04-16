@@ -28,7 +28,7 @@ class BME680Poller:
         self._iaq_buffer = deque(maxlen=12)  # last 1 minute of readings
         self._gas_baseline = None
         self._start_time = time.time()
-        self._burn_in_sec = 300  # 5 minutes warm-up
+        self._burn_in_sec = 30  # Reduced to 30s for faster feedback
 
     @property
     def last_reading(self) -> dict | None:
@@ -60,18 +60,16 @@ class BME680Poller:
             logger.error("BME680 init failed: %s", e)
             self._sensor = None
 
-    def _compute_iaq(self, gas_resistance: float, humidity: float) -> float | None:
+    def _compute_iaq(self, gas_resistance: float, humidity: float) -> float:
         """
         Compute a simple Indoor Air Quality (IAQ) score 0-500.
         Lower = better air quality.
         """
-        # Burn-in check
-        if time.time() - self._start_time < self._burn_in_sec:
-            return None
-
         # Gas baseline tracking (higher = cleaner air)
         if self._gas_baseline is None or gas_resistance > self._gas_baseline:
             self._gas_baseline = gas_resistance
+
+        # No longer blocking with burn-in per user request
 
         # Gas contribution (75%)
         # Scale: 0-100% where 100% is at the baseline (cleanest air seen)

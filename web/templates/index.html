@@ -163,6 +163,12 @@
             box-shadow: 0 0 20px rgba(56, 189, 248, 0.1);
         }
 
+        .nav-btn-active {
+            background: var(--neon-cyan) !important;
+            color: var(--bg-base) !important;
+            box-shadow: 0 0 15px var(--neon-cyan);
+        }
+
         .sys-status {
             margin-top: auto;
             padding: 20px;
@@ -182,6 +188,136 @@
             font-family: var(--font-data);
             color: var(--text-pure);
             font-weight: 600;
+        }
+
+        /* ─── Responsive Redesign ─── */
+        @media (max-width: 900px) {
+            .dashboard-layout {
+                grid-template-columns: 1fr;
+                display: flex;
+                flex-direction: column;
+            }
+
+            .sidebar {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 70px;
+                width: 100%;
+                z-index: 1000;
+                flex-direction: row;
+                align-items: center;
+                gap: 20px;
+                padding: 0 20px;
+                background: rgba(3, 7, 18, 0.9);
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            }
+
+            .sidebar .brand {
+                margin-bottom: 0;
+                font-size: 1.1rem;
+                flex-shrink: 0;
+            }
+
+            .sidebar .brand span {
+                display: none;
+                /* Hide text on very small screens if needed, otherwise keep short */
+            }
+
+            .sidebar .nav-menu {
+                flex-direction: row;
+                overflow-x: auto;
+                gap: 5px;
+                height: 100%;
+                align-items: center;
+                scrollbar-width: none;
+                /* Firefox */
+                -ms-overflow-style: none;
+                /* IE 10+ */
+            }
+
+            .sidebar .nav-menu::-webkit-scrollbar {
+                display: none;
+                /* Webkit */
+            }
+
+            .sidebar .nav-btn {
+                padding: 8px 14px;
+                font-size: 0.85rem;
+                flex-shrink: 0;
+                gap: 6px;
+                height: 40px;
+                border: 1px solid rgba(255, 255, 255, 0.05);
+            }
+
+            .sidebar .nav-btn span {
+                white-space: nowrap;
+            }
+
+            .sidebar .nav-btn i {
+                font-size: 1.1rem;
+            }
+
+            .sidebar .nav-btn:hover {
+                transform: none;
+            }
+
+            .sidebar .sys-status {
+                display: none;
+                /* Hide system status from mobile header */
+            }
+
+            .main-content {
+                padding: 20px;
+                padding-top: 90px;
+                /* Space for fixed header */
+            }
+
+            .header-top {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 12px;
+                margin-bottom: 25px;
+            }
+
+            .header-top h1 {
+                font-size: 1.6rem;
+            }
+
+            .metrics-grid {
+                grid-template-columns: 1fr !important;
+                gap: 16px;
+            }
+
+            .widget {
+                padding: 20px;
+            }
+
+            .widget-value {
+                font-size: 2.2rem;
+            }
+
+            .panel-header {
+                padding: 15px 20px;
+            }
+
+            .panel-title {
+                font-size: 1rem;
+            }
+
+            /* Fix Ghost Delta Mobile */
+            .ghost-delta-panel {
+                width: 100% !important;
+                margin-top: 15px;
+            }
+
+            #fogToggleBtn span {
+                display: none;
+                /* Compact toggle on mobile */
+            }
         }
 
         /* ─── Main Content ─── */
@@ -476,52 +612,6 @@
             font-family: var(--font-ui);
             font-weight: 700;
             font-size: 0.7rem;
-        }
-
-        /* ─── Responsive ─── */
-        @media (max-width: 900px) {
-            .dashboard-layout {
-                grid-template-columns: 1fr;
-            }
-
-            .sidebar {
-                position: relative;
-                height: auto;
-                padding: 20px;
-                flex-direction: row;
-                flex-wrap: wrap;
-                border-right: none;
-                border-bottom: 1px solid var(--border);
-                z-index: 100;
-            }
-
-            .brand {
-                width: 100%;
-                margin-bottom: 20px;
-            }
-
-            .nav-menu {
-                flex-direction: row;
-                overflow-x: auto;
-                width: 100%;
-            }
-
-            .nav-btn {
-                padding: 8px 16px;
-                white-space: nowrap;
-            }
-
-            .sys-status {
-                display: none;
-            }
-
-            .main-content {
-                padding: 20px;
-            }
-
-            .widget-value {
-                font-size: 2.2rem;
-            }
         }
 
         /* ─── Ghost Ride HUD ─── */
@@ -895,8 +985,13 @@
                 </div>
 
                 <div class="panel glass">
-                    <div class="panel-header">
+                    <div class="panel-header"
+                        style="display: flex; justify-content: space-between; align-items: center;">
                         <div class="panel-title">Global Map (Fog of War)</div>
+                        <button class="nav-btn" onclick="toggleFog()" title="Toggle Fog of War" id="fogToggleBtn"
+                            style="padding: 4px 12px; font-size: 0.8rem; height: 32px; display: flex; align-items: center; gap: 6px;">
+                            <i class="ph ph-eye-slash"></i> Clear Fog
+                        </button>
                     </div>
                     <div id="gpsMap"
                         style="height: 400px; width: 100%; border-radius: 12px; background: #000; border:1px solid var(--border)">

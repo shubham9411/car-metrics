@@ -134,30 +134,31 @@ def api_status():
             start_loc = conn.execute("SELECT lat, lon FROM locations WHERE id=?", (active_trip['start_location_id'],)).fetchone()
 
             for r in routines:
-                # Base score from trip count
+                # Base score from trip count (frequency)
                 score = r['trip_count'] * 1.0
                 
-                # Temporal bias: Morning = Work, Evening = Home
-                if is_weekday:
-                    if 6 <= hour <= 11 and "work" in (r['end_name'] or "").lower():
-                        score *= 5.0
-                    if 16 <= hour <= 21 and "home" in (r['end_name'] or "").lower():
-                        score *= 5.0
-
-                # Directional bias: If heading matches bearing to destination
+                # Directional bias: If current heading matches bearing to destination
                 if current_heading is not None and start_loc:
                     bearing = _calculate_bearing(start_loc['lat'], start_loc['lon'], r['end_lat'], r['end_lon'])
                     diff = abs(current_heading - bearing) % 360
                     if diff > 180: diff = 360 - diff
-                    if diff < 30: # Within 30 degrees
-                        score *= 3.0
+                    if diff < 45: # Broad direction check
+                        score *= 2.0
+
+                # Recency bias: Check when the last trip for this routine happened
+                last_trip = conn.execute("SELECT start_ts FROM trips WHERE id=?", (r['pb_trip_id'],)).fetchone()
+                if last_trip:
+                    # Score multiplier based on recency (bonus for trips in last 7 days)
+                    days_ago = (time.time() - last_trip['start_ts']) / 86400
+                    if days_ago < 7:
+                        score *= (2.0 - (days_ago / 7.0))
                 
                 scored_routines.append({"routine": r, "score": score})
 
             scored_routines.sort(key=lambda x: x['score'], reverse=True)
             top = scored_routines[0]
 
-            # Fetch Ghost Path for the TOP routine with relative offsets
+            # Fetch Ghost Path for the TOP routine
             ghost_path = []
             if top['routine']['pb_trip_id']:
                 pb_tid = top['routine']['pb_trip_id']

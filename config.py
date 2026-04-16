@@ -58,6 +58,7 @@ CAMERA_MAX_LOCAL_IMAGES = int(os.environ.get("CM_CAM_MAX_LOCAL", "1000"))
 # OBD2 (ELM327 Bluetooth)
 # ──────────────────────────────────────────────
 OBD_PORT = os.environ.get("CM_OBD_PORT", "/dev/rfcomm0")
+OBD_MAC = os.environ.get("CM_OBD_MAC", "AA:BB:CC:11:22:33")
 OBD_BAUD = int(os.environ.get("CM_OBD_BAUD", "38400"))
 OBD_FAST = os.environ.get("CM_OBD_FAST", "true").lower() == "true"
 # PIDs to watch (python-obd command names)
