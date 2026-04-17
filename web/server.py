@@ -7,15 +7,20 @@ Start manually:  python3 web/server.py
 Or via systemd:  sudo systemctl start car-metrics-web
 """
 
-import json
-import math
 import os
 import sys
-import time
-from datetime import datetime
 
 # Add parent dir to path so we can import config/storage
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import json
+import math
+import threading
+import time
+import logging
+from datetime import datetime, timedelta
+
+from scripts import aggregate_env
 
 import config
 from storage import db
@@ -501,7 +506,27 @@ def api_env_history():
             s_ts = float(start)
             e_ts = float(end)
             
-            # Bucket aggregation: group by time slices
+            # Smart Switching: Use summary table for long ranges (bucket >= 1 hour)
+            if b_size >= 3600:
+                query = """
+                    SELECT ts as bucket_ts, avg_temp, avg_hum, avg_iaq
+                    FROM env_hourly_summary
+                    WHERE ts >= ? AND ts <= ?
+                    ORDER BY ts ASC
+                """
+                rows = conn.execute(query, (s_ts, e_ts)).fetchall()
+                points = []
+                for r in rows:
+                    points.append({
+                        "ts": r["bucket_ts"],
+                        "temp": round(r["avg_temp"], 2) if r["avg_temp"] else None,
+                        "hum": round(r["avg_hum"], 1) if r["avg_hum"] else None,
+                        "iaq": int(r["avg_iaq"]) if r["avg_iaq"] else None
+                    })
+                response.content_type = "application/json"
+                return json.dumps(points)
+
+            # High-resolution Bucket aggregation from raw data
             query = """
                 SELECT 
                     (CAST(ts / ? AS INT) * ?) as bucket_ts,
@@ -550,7 +575,34 @@ def api_env_history():
     return json.dumps(points[::-1])  # oldest first for chart
 
 
-@app.route("/api/locations", method=["GET", "POST"])
+@app.route("/api/env/stats")
+def api_env_stats():
+    """Get aggregated min/max/avg environmental stats for the last 24h."""
+    now = time.time()
+    day_ago = now - (24 * 3600)
+    
+    conn = db.get_connection()
+    query = """
+        SELECT 
+            AVG(temperature) as avg_temp, MIN(temperature) as min_temp, MAX(temperature) as max_temp,
+            AVG(humidity) as avg_hum, MIN(humidity) as min_hum, MAX(humidity) as max_hum,
+            AVG(CASE WHEN iaq_score > 0 THEN iaq_score END) as avg_iaq, 
+            MIN(CASE WHEN iaq_score > 0 THEN iaq_score END) as min_iaq, 
+            MAX(iaq_score) as max_iaq
+        FROM env_readings 
+        WHERE ts >= ?
+    """
+    res = conn.execute(query, (day_ago,)).fetchone()
+    
+    response.content_type = "application/json"
+    if not res or res["avg_temp"] is None:
+        return json.dumps(None)
+        
+    return json.dumps({
+        "temp": {"avg": round(res["avg_temp"], 1), "min": round(res["min_temp"], 1), "max": round(res["max_temp"], 1)},
+        "hum":  {"avg": round(res["avg_hum"], 1),  "min": round(res["min_hum"], 1),  "max": round(res["max_hum"], 1)},
+        "iaq":  {"avg": int(res["avg_iaq"]),      "min": int(res["min_iaq"]),      "max": int(res["max_iaq"])}
+    })
 def api_locations():
     """Get or update discovered anchor point locations."""
     conn = db.get_connection()
@@ -672,6 +724,19 @@ def _row_to_dict(row) -> dict:
 WEB_HOST = os.environ.get("CM_WEB_HOST", "0.0.0.0")
 WEB_PORT = int(os.environ.get("CM_WEB_PORT", "8080"))
 
+def _agg_worker():
+    """Background worker to run aggregation periodically."""
+    while True:
+        try:
+            logger.info("Background Aggregator: Running...")
+            aggregate_env.run_aggregation()
+        except Exception as e:
+            logger.error("Background Aggregator failed: %s", e)
+        time.sleep(1800) # Run every 30 minutes
+
 if __name__ == "__main__":
+    # Start background aggregator
+    threading.Thread(target=_agg_worker, daemon=True).start()
+    
     print(f"Car Metrics Dashboard: http://{WEB_HOST}:{WEB_PORT}")
     app.run(host=WEB_HOST, port=WEB_PORT, debug=False, quiet=True)

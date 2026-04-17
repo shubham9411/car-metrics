@@ -475,8 +475,27 @@ async function refreshEnvHistory() {
         const res = await fetch(url);
         envData = await res.json();
         initOrUpdateEnvChart();
+        await refreshEnvStats();
     } catch (e) {
         console.error("Failed to load env history", e);
+    }
+}
+
+async function refreshEnvStats() {
+    try {
+        const res = await fetch('/api/env/stats');
+        const stats = await res.json();
+        if (!stats) return;
+
+        el('statAvgTemp').innerHTML = `${stats.temp.avg}<span class="stat-label-avg">AVG</span>`;
+        el('statMaxTemp').textContent = `HI: ${stats.temp.max}°C`;
+        el('statMinTemp').textContent = `LO: ${stats.temp.min}°C`;
+
+        el('statAvgIAQ').innerHTML = `${stats.iaq.avg}<span class="stat-label-avg">AVG</span>`;
+        el('statMaxIAQ').textContent = `HI: ${stats.iaq.max}`;
+        el('statMinIAQ').textContent = `LO: ${stats.iaq.min}`;
+    } catch (e) {
+        console.error("Failed to load env stats", e);
     }
 }
 

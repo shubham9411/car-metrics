@@ -2,6 +2,8 @@
 
 A premium, high-fidelity car telemetry and instrument cluster system designed for the Raspberry Pi. This project transforms a 2-inch ST7789V LCD into a modern "Digital Cockpit" while providing a performant web dashboard for historical analysis.
 
+![S-Type Dashboard Overview](assets/dashboard_overview.png)
+
 ## ✨ Key Features
 
 ### 🖥️ Premium Digital Cockpit (LCD)

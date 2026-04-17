@@ -173,6 +173,18 @@ def _init_schema(conn: sqlite3.Connection):
             iaq_score REAL,
             synced INTEGER DEFAULT 0
         );
+
+        CREATE TABLE IF NOT EXISTS env_hourly_summary (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts REAL NOT NULL,
+            avg_temp REAL,
+            avg_hum REAL,
+            avg_iaq REAL,
+            count INTEGER
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_env_readings_ts ON env_readings(ts);
+        CREATE INDEX IF NOT EXISTS idx_env_summary_ts ON env_hourly_summary(ts);
     """)
 
     # Safe schema migrations for existing local databases

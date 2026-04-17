@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.toast
+.build
+.pytype/
+
+# Environment
+.env
+.flaskenv
+
+# Database & Logs
+*.db
+*.db-wal
+*.db-shm
+*.log
+.simulate_data
+.force_camera
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project Specific
+/car_metrics_data/
+/images/
+/temp/
+/*.aab
+/*.apk
