@@ -31,6 +31,8 @@ def get_connection() -> sqlite3.Connection:
         # Crash-safe WAL mode
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.execute("PRAGMA synchronous=NORMAL")
+        # Enable Foreign Keys (disabled by default in SQLite)
+        _conn.execute("PRAGMA foreign_keys = ON")
         # Smaller cache to save RAM
         _conn.execute("PRAGMA cache_size=-2000")  # 2MB
         _conn.row_factory = sqlite3.Row
@@ -185,6 +187,11 @@ def _init_schema(conn: sqlite3.Connection):
 
         CREATE INDEX IF NOT EXISTS idx_env_readings_ts ON env_readings(ts);
         CREATE INDEX IF NOT EXISTS idx_env_summary_ts ON env_hourly_summary(ts);
+
+        -- Spatial/Temporal indexes for performance
+        CREATE INDEX IF NOT EXISTS idx_locations_coord ON locations(lat, lon);
+        CREATE INDEX IF NOT EXISTS idx_trips_ts ON trips(start_ts, end_ts);
+        CREATE INDEX IF NOT EXISTS idx_trip_routes_trip ON trip_routes(trip_id);
     """)
 
     # Safe schema migrations for existing local databases
@@ -225,12 +232,7 @@ def _init_schema(conn: sqlite3.Connection):
 
     conn.commit()
 
-    # Indexing for performance
-    try:
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_env_readings_ts ON env_readings(ts)")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass
+    conn.commit()
 
 
 # ─── Insert helpers ───────────────────────────────

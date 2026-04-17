@@ -23,6 +23,7 @@ class CameraPoller:
         self._picam = None
         self._running = False
         self._burst_requested = False
+        self._capture_count = 0
         self.obd_connected = False  # Set by main.py from OBD poller state
 
     def _init_camera(self):
@@ -128,8 +129,10 @@ class CameraPoller:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
-        # Rotate old images
-        self._rotate_images()
+        # Rotate old images less frequently to save I/O
+        self._capture_count += 1
+        if self._capture_count % 50 == 0:
+            self._rotate_images()
 
     def _rotate_images(self):
         """Delete oldest images if over the local limit."""

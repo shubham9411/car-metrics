@@ -117,31 +117,49 @@ class CarMetrics:
             self.camera.obd_connected = connected
             await asyncio.sleep(5)
 
+    async def _watchdog(self, name: str, coro_func, *args, **kwargs):
+        """Monitor and restart a component task if it crashes."""
+        while not self._shutdown_event.is_set():
+            try:
+                # Some pollers might have a .run method
+                if hasattr(coro_func, "run"):
+                    await coro_func.run(*args, **kwargs)
+                else:
+                    await coro_func(*args, **kwargs)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                if not self._shutdown_event.is_set():
+                    logger.error("⚙️ Component '%s' crashed: %s. Restarting in 10s...", name, e)
+                    await asyncio.sleep(10)
+                else:
+                    break
+
     async def start(self):
-        """Start all tasks in the event loop."""
+        """Start all tasks in the event loop with supervision."""
         logger.info("=" * 50)
-        logger.info("  Car Metrics — Starting up")
+        logger.info("  Car Metrics — Starting up (Resilient Mode)")
         logger.info("  Data dir: %s", config.DATA_DIR)
         logger.info("=" * 50)
-
+ 
         # Ensure DB is initialized
         db.get_connection()
-
-        # Create all tasks
+ 
+        # Define supervised tasks
         tasks = [
-            asyncio.create_task(self.imu.run(
+            asyncio.create_task(self._watchdog("IMU", self.imu.run, 
                 on_reading=self.crash_detector.check,
                 is_car_on_func=lambda: self.trip_manager.active_trip_id is not None
             )),
-            asyncio.create_task(self.gps.run()),
-            asyncio.create_task(self.camera.run()),
-            asyncio.create_task(self.obd.run()),
-            asyncio.create_task(self.bme680.run()),
-            asyncio.create_task(self.display.run()),
-            asyncio.create_task(self.trip_manager.run()),
-            asyncio.create_task(self.sync_engine.run()),
-            asyncio.create_task(self._heartbeat()),
-            asyncio.create_task(self._obd_camera_link()),
+            asyncio.create_task(self._watchdog("GPS", self.gps.run)),
+            asyncio.create_task(self._watchdog("Camera", self.camera.run)),
+            asyncio.create_task(self._watchdog("OBD", self.obd.run)),
+            asyncio.create_task(self._watchdog("BME680", self.bme680.run)),
+            asyncio.create_task(self._watchdog("Display", self.display.run)),
+            asyncio.create_task(self._watchdog("TripMgr", self.trip_manager.run)),
+            asyncio.create_task(self._watchdog("Sync", self.sync_engine.run)),
+            asyncio.create_task(self._watchdog("Heartbeat", self._heartbeat)),
+            asyncio.create_task(self._watchdog("OBDCamLink", self._obd_camera_link)),
         ]
 
         # Wait for shutdown signal
