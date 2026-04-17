@@ -8,6 +8,7 @@ import logging
 import time
 import math
 import os
+from datetime import datetime, timedelta, timezone
 
 import config
 from storage import db
@@ -30,6 +31,7 @@ EMERALD = "#10b981"
 SLATE   = "#475569"
 WHITE   = "#f8fafc"
 DIM     = "#1e293b"
+PURPLE  = "#a855f7"
 
 
 def _try_import():
@@ -236,7 +238,7 @@ def _render_cockpit_env(draw, ImageFont, data):
 
     # 5. BOTTOM RIGHT: ELEVATION
     alt = gps.get("alt")
-    _text_centered(draw, ImageFont, 260, 160, f"{int(alt)}m" if alt else "--m", 22, PURPLE if 'PURPLE' in globals() else CYAN, family="bold")
+    _text_centered(draw, ImageFont, 260, 160, f"{int(alt)}m" if alt else "--m", 22, PURPLE, family="bold")
     _text_centered(draw, ImageFont, 260, 180, "ALTITUDE", 10, SLATE)
 
     _draw_status_bar(draw, ImageFont, data)

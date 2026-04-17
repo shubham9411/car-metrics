@@ -60,7 +60,12 @@ class IMUPoller:
         self._mag_type = None  # 'hmc', 'qmc', or None
         self._mag_addr = None
         self.gps = gps_poller
-        self.last_reading = {} 
+        self.last_reading = {}
+        
+        # Calibration Offsets
+        self._offset_file = os.path.join(config.DATA_DIR, "imu_offsets.json")
+        self._offsets = {"ax": 0.0, "ay": 0.0, "az": 0.0}
+        self._load_offsets()
         
         # State for IMU simulation
         self._last_sim_speed = 0.0
@@ -139,6 +144,15 @@ class IMUPoller:
         ax = self._to_signed(data[0], data[1]) / _MPU_ACCEL_SCALE
         ay = self._to_signed(data[2], data[3]) / _MPU_ACCEL_SCALE
         az = self._to_signed(data[4], data[5]) / _MPU_ACCEL_SCALE
+        
+        # Apply calibration offsets
+        ax -= self._offsets.get("ax", 0.0)
+        ay -= self._offsets.get("ay", 0.0)
+        az_offset = self._offsets.get("az", 0.0)
+        # Note: Vertical gravity (1G) is usually handled by keeping raw Z near 1.0
+        # but for lateral display we might zero it out if user calibrated it that way.
+        az -= az_offset
+
         gx = self._to_signed(data[8], data[9]) / _MPU_GYRO_SCALE
         gy = self._to_signed(data[10], data[11]) / _MPU_GYRO_SCALE
         gz = self._to_signed(data[12], data[13]) / _MPU_GYRO_SCALE
@@ -171,7 +185,73 @@ class IMUPoller:
         except OSError:
             return {"mx": None, "my": None, "mz": None}
 
-    # ─── BMP180 ───────────────────────────────────
+    # ─── Calibration Logic ────────────────────────
+    
+    def _load_offsets(self):
+        """Load offsets from persistent JSON file."""
+        import json
+        if os.path.exists(self._offset_file):
+            try:
+                with open(self._offset_file, "r") as f:
+                    self._offsets = json.load(f)
+                logger.info("Loaded IMU offsets: %s", self._offsets)
+            except Exception as e:
+                logger.error("Failed to load IMU offsets: %s", e)
+
+    def _save_offsets(self):
+        """Save current offsets to persistence."""
+        import json
+        try:
+            with open(self._offset_file, "w") as f:
+                json.dump(self._offsets, f)
+            logger.info("Saved IMU offsets: %s", self._offsets)
+        except Exception as e:
+            logger.error("Failed to save IMU offsets: %s", e)
+
+    async def calibrate_level(self, samples=20):
+        """
+        Sample the IMU while stationary to determine mounting tilt.
+        Subtracts 1.0 from Z-axis to keep gravity baseline correct.
+        """
+        logger.info("Starting IMU calibration (taring)...")
+        sum_ax, sum_ay, sum_az = 0.0, 0.0, 0.0
+        valid_samples = 0
+        
+        # Use a temporary raw read without current offsets
+        prev_offsets = self._offsets.copy()
+        self._offsets = {"ax": 0.0, "ay": 0.0, "az": 0.0}
+        
+        for _ in range(samples):
+            try:
+                r = self.read_once()
+                sum_ax += r["ax"]
+                sum_ay += r["ay"]
+                sum_az += r.get("az", 0.0)
+                valid_samples += 1
+            except:
+                pass
+            await asyncio.sleep(0.1)
+            
+        if valid_samples > 0:
+            self._offsets = {
+                "ax": sum_ax / valid_samples,
+                "ay": sum_ay / valid_samples,
+                "az": (sum_az / valid_samples) - 1.0  # Keep Z relative to 1G
+            }
+            self._save_offsets()
+            logger.info("IMU calibration complete: %s", self._offsets)
+        else:
+            self._offsets = prev_offsets
+            logger.error("IMU calibration failed — no valid samples")
+
+    def reset_calibration(self):
+        """Revert to raw readings and delete offset file."""
+        self._offsets = {"ax": 0.0, "ay": 0.0, "az": 0.0}
+        if os.path.exists(self._offset_file):
+            os.remove(self._offset_file)
+        logger.info("IMU calibration reset to factory raw")
+
+    # ─── Main poll loop ───────────────────────────
 
     def _read_bmp_calibration(self) -> dict:
         """Read BMP180 factory calibration coefficients."""
@@ -312,6 +392,20 @@ class IMUPoller:
         last_heartbeat = 0
         while self._running:
             try:
+                # Check for calibration triggers from web dashboard
+                cal_file = os.path.join(config.DATA_DIR, ".trigger_imu_calibrate")
+                reset_file = os.path.join(config.DATA_DIR, ".trigger_imu_reset")
+                
+                if os.path.exists(cal_file):
+                    await self.calibrate_level(samples=20)
+                    try: os.remove(cal_file)
+                    except: pass
+                
+                if os.path.exists(reset_file):
+                    self.reset_calibration()
+                    try: os.remove(reset_file)
+                    except: pass
+
                 t0 = time.monotonic()
                 reading = self.read_once()
                 self.last_reading = reading

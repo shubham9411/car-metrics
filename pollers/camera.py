@@ -75,8 +75,7 @@ class CameraPoller:
         """Async capture loop."""
         self._init_camera()
         if not self._picam:
-            logger.warning("Camera poller not started — no camera available")
-            return
+            raise RuntimeError("Camera hardware initialization failed (libcamera error).")
 
         self._running = True
         logger.info("Camera poller started (interval=%ds, requires OBD or force file)", config.CAMERA_INTERVAL_SEC)

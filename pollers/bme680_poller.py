@@ -121,6 +121,7 @@ class BME680Poller:
                     self._iaq_buffer.append(raw_iaq) if raw_iaq is not None else None
                     reading["iaq_score"] = round(sum(self._iaq_buffer) / len(self._iaq_buffer), 1) if self._iaq_buffer else None
                     reading["gas_baseline"] = self._gas_baseline or 50000.0
+                    reading["is_mock"] = 1
                     
                     self._last_reading = reading
                     db.insert_env_reading(reading)
@@ -155,6 +156,7 @@ class BME680Poller:
                         reading["iaq_score"] = None
                     
                     reading["gas_baseline"] = round(self._gas_baseline, 0) if self._gas_baseline else None
+                    reading["is_mock"] = 0
                         
                     self._last_reading = reading
                     db.insert_env_reading(reading)

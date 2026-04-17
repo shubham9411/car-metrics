@@ -16,12 +16,12 @@ def run_aggregation():
     conn = db.get_connection()
     
     # 1. Find last aggregated timestamp
-    res = conn.execute("SELECT MAX(ts) as last_ts FROM env_hourly_summary").fetchone()
+    res = conn.execute("SELECT MAX(ts) as last_ts FROM env_hourly_summary WHERE is_mock = 0").fetchone()
     last_ts = res["last_ts"]
     
     if last_ts is None:
         # Start from the very beginning
-        res = conn.execute("SELECT MIN(ts) as first_ts FROM env_readings").fetchone()
+        res = conn.execute("SELECT MIN(ts) as first_ts FROM env_readings WHERE is_mock = 0").fetchone()
         if not res or res["first_ts"] is None:
             return # No data to aggregate
         # Start at the beginning of that hour
@@ -49,7 +49,7 @@ def run_aggregation():
                 AVG(CASE WHEN iaq_score >= 1 THEN iaq_score END) as avg_iaq,
                 COUNT(*) as readings_count
             FROM env_readings
-            WHERE ts >= ? AND ts < ?
+            WHERE ts >= ? AND ts < ? AND is_mock = 0
         """
         row = conn.execute(query, (start_ts, end_ts)).fetchone()
         

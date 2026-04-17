@@ -511,7 +511,7 @@ def api_env_history():
                 query = """
                     SELECT ts as bucket_ts, avg_temp, avg_hum, avg_iaq
                     FROM env_hourly_summary
-                    WHERE ts >= ? AND ts <= ?
+                    WHERE ts >= ? AND ts <= ? AND is_mock = 0
                     ORDER BY ts ASC
                 """
                 rows = conn.execute(query, (s_ts, e_ts)).fetchall()
@@ -534,7 +534,7 @@ def api_env_history():
                     AVG(humidity) as avg_hum,
                     AVG(iaq_score) as avg_iaq
                 FROM env_readings 
-                WHERE ts >= ? AND ts <= ?
+                WHERE ts >= ? AND ts <= ? AND is_mock = 0
                 GROUP BY bucket_ts
                 ORDER BY bucket_ts ASC
             """
@@ -558,7 +558,7 @@ def api_env_history():
     # Default: last N points
     limit = min(int(request.query.get("limit", 120)), 1000)
     rows = conn.execute(
-        "SELECT ts, temperature, humidity, iaq_score FROM env_readings ORDER BY id DESC LIMIT ?",
+        "SELECT ts, temperature, humidity, iaq_score FROM env_readings WHERE is_mock = 0 ORDER BY id DESC LIMIT ?",
         (limit,),
     ).fetchall()
 
@@ -590,7 +590,7 @@ def api_env_stats():
             MIN(CASE WHEN iaq_score >= 1 THEN iaq_score END) as min_iaq, 
             MAX(iaq_score) as max_iaq
         FROM env_readings 
-        WHERE ts >= ?
+        WHERE ts >= ? AND is_mock = 0
     """
     res = conn.execute(query, (day_ago,)).fetchone()
     
@@ -661,6 +661,28 @@ def api_force_camera():
     response.content_type = "application/json"
     enabled = os.path.exists(FORCE_CAM_FILE)
     return json.dumps({"enabled": enabled})
+
+
+@app.route("/api/imu/calibrate", method="POST")
+def api_imu_calibrate():
+    """Signaling endpoint to trigger IMU auto-tare."""
+    try:
+        open(os.path.join(config.DATA_DIR, ".trigger_imu_calibrate"), "w").close()
+        return json.dumps({"status": "ok", "message": "Calibration triggered. Stationary for 2s..."})
+    except Exception as e:
+        response.status = 500
+        return json.dumps({"status": "error", "message": str(e)})
+
+
+@app.route("/api/imu/reset", method="POST")
+def api_imu_reset():
+    """Signaling endpoint to reset IMU offsets."""
+    try:
+        open(os.path.join(config.DATA_DIR, ".trigger_imu_reset"), "w").close()
+        return json.dumps({"status": "ok", "message": "Calibration reset triggered."})
+    except Exception as e:
+        response.status = 500
+        return json.dumps({"status": "error", "message": str(e)})
 
 
 SIM_DATA_FILE = os.path.join(config.DATA_DIR, ".simulate_data")

@@ -173,6 +173,7 @@ def _init_schema(conn: sqlite3.Connection):
             gas_resistance REAL,
             gas_baseline REAL,
             iaq_score REAL,
+            is_mock INTEGER DEFAULT 0,
             synced INTEGER DEFAULT 0
         );
 
@@ -182,7 +183,8 @@ def _init_schema(conn: sqlite3.Connection):
             avg_temp REAL,
             avg_hum REAL,
             avg_iaq REAL,
-            count INTEGER
+            count INTEGER,
+            is_mock INTEGER DEFAULT 0
         );
 
         CREATE INDEX IF NOT EXISTS idx_env_readings_ts ON env_readings(ts);
@@ -226,7 +228,12 @@ def _init_schema(conn: sqlite3.Connection):
             pass
 
     try:
-        conn.execute("ALTER TABLE routines ADD COLUMN pb_trip_id INTEGER")
+        conn.execute("ALTER TABLE env_readings ADD COLUMN is_mock INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        conn.execute("ALTER TABLE env_hourly_summary ADD COLUMN is_mock INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass
 
@@ -300,9 +307,9 @@ def insert_env_reading(reading: dict):
     """Insert a single BME680 environmental reading."""
     conn = get_connection()
     conn.execute(
-        """INSERT INTO env_readings (ts, temperature, humidity, pressure, gas_resistance, iaq_score)
-           VALUES (:ts, :temperature, :humidity, :pressure, :gas_resistance, :iaq_score)""",
-        reading,
+        """INSERT INTO env_readings (ts, temperature, humidity, pressure, gas_resistance, iaq_score, is_mock)
+           VALUES (:ts, :temperature, :humidity, :pressure, :gas_resistance, :iaq_score, :is_mock)""",
+        {**{"is_mock": 0}, **reading}, # Default is_mock to 0
     )
     conn.commit()
 

@@ -126,6 +126,8 @@ class CarMetrics:
                     await coro_func.run(*args, **kwargs)
                 else:
                     await coro_func(*args, **kwargs)
+                # Small delay to prevent tight-looping if task returns immediately
+                await asyncio.sleep(1)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -145,6 +147,11 @@ class CarMetrics:
         # Ensure DB is initialized
         db.get_connection()
  
+        # Optional: Auto-Calibration on first run
+        if not os.path.exists(self.imu._offset_file):
+            logger.info("📐 No IMU offsets found — performing first-run auto-tare...")
+            await self.imu.calibrate_level(samples=20)
+
         # Define supervised tasks
         tasks = [
             asyncio.create_task(self._watchdog("IMU", self.imu.run, 
