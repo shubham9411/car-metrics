@@ -1,12 +1,13 @@
 """
 Car Metrics — ST7789V 2" LCD Display Poller
-Graphical rotating widgets: Cluster, G-Force, and Environment.
+Premium Digital Cockpit UI with Inter Typography.
 """
 
 import asyncio
 import logging
 import time
 import math
+import os
 
 import config
 from storage import db
@@ -14,21 +15,21 @@ from storage import db
 logger = logging.getLogger("pollers.display")
 
 # ─── Display Settings ────────────────────────────────
-# landscape view: 320 wide, 240 high
 WIDTH  = 320
 HEIGHT = 240
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FONT_BOLD = os.path.join(BASE_DIR, "assets", "fonts", "Inter-Bold.ttf")
+FONT_MED  = os.path.join(BASE_DIR, "assets", "fonts", "Inter-Medium.ttf")
 
-# ─── Colors ──────────────────────────────────────────
-BG       = "#05070a"
-CYAN     = "#38bdf8"
-PURPLE   = "#c084fc"
-GREEN    = "#34d399"
-YELLOW   = "#fbbf24"
-RED      = "#f43f5e"
-MID      = "#1e293b"
-DIM      = "#0f172a"
-TEXT_DIM = "#64748b"
-WHITE    = "#f8fafc"
+# ─── Premium Palette ─────────────────────────────────
+BG      = "#020408"
+CYAN    = "#06b6d4"
+AMBER   = "#f59e0b"
+ROSE    = "#f43f5e"
+EMERALD = "#10b981"
+SLATE   = "#475569"
+WHITE   = "#f8fafc"
+DIM     = "#1e293b"
 
 
 def _try_import():
@@ -50,250 +51,242 @@ def _try_import():
             gpio_RST=config.DISPLAY_RST_PIN,
             bus_speed_hz=24_000_000,
         )
-        
-        # Most 2" 320x240 modules use 0 offset, but if noise persists, 
-        # we might need to experiment with x_offset/y_offset.
-        device = st7789(
-            serial,
-            width=WIDTH,
-            height=HEIGHT,
-            rotate=0,     # We initialized as 320x240, so no rotation needed
-        )
-        logger.info("ST7789V display initialised (%dx%d)", WIDTH, HEIGHT)
+        device = st7789(serial, width=WIDTH, height=HEIGHT, rotate=0)
         return device, Image, ImageDraw, ImageFont
     except Exception as e:
         logger.warning("Display init failed: %s", e)
         return None, None, None, None
 
 
-# ─── Helpers ─────────────────────────────────────────
+# ─── Styling Helpers ─────────────────────────────────
 
-_FONTS = {}
-def get_font(ImageFont, size, bold=False):
-    key = (size, bold)
-    if key not in _FONTS:
-        try:
-            # Try to use a better font if available, otherwise default
-            _FONTS[key] = ImageFont.load_default(size=size)
-        except Exception:
-            _FONTS[key] = ImageFont.load_default()
-    return _FONTS[key]
+_FCACHE = {}
+
+def get_font(ImageFont, family, size):
+    path = FONT_BOLD if family == "bold" else FONT_MED
+    key = (path, size)
+    if key not in _FCACHE:
+        if os.path.exists(path):
+            _FCACHE[key] = ImageFont.truetype(path, size)
+        else:
+            _FCACHE[key] = ImageFont.load_default()
+    return _FCACHE[key]
 
 
-def _text_centered(draw, ImageFont, cx, cy, text, size, fill, bold=False):
-    fnt = get_font(ImageFont, size, bold)
+def _text_centered(draw, ImageFont, cx, cy, text, size, fill, family="med", glow=False):
+    fnt = get_font(ImageFont, family, size)
     try:
         bbox = fnt.getbbox(text)
-        w = bbox[2] - bbox[0]
-        h = bbox[3] - bbox[1]
-    except Exception:
-        w = len(text) * (size // 2)
-        h = size
+        w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    except:
+        w, h = len(text) * (size // 2), size
+
+    if glow:
+        # Simple bloom effect
+        for off in [(1,0),(-1,0),(0,1),(0,-1)]:
+            draw.text((cx - w//2 + off[0], cy - h//2 + off[1]), text, fill=fill, font=fnt, opacity=100)
+    
     draw.text((cx - w//2, cy - h//2), text, fill=fill, font=fnt)
 
 
-def _draw_header(draw, ImageFont, title, color):
-    draw.rectangle([(0, 0), (WIDTH, 35)], fill=DIM)
-    draw.line([(0, 35), (WIDTH, 35)], fill=color, width=2)
-    _text_centered(draw, ImageFont, WIDTH//2, 17, title, 16, WHITE, True)
+def _draw_status_bar(draw, ImageFont, data):
+    draw.rectangle([(0, HEIGHT-35), (WIDTH, HEIGHT)], fill="#0a0f1a")
+    draw.line([(0, HEIGHT-35), (WIDTH, HEIGHT-35)], fill=DIM, width=1)
+    
+    # Time
+    _text_centered(draw, ImageFont, WIDTH-40, HEIGHT-17, time.strftime("%H:%M"), 14, WHITE)
+    
+    # GPS Fix
+    gps = data.get("gps", {})
+    fix = gps.get("fix_quality", 0) > 0
+    sats = gps.get("satellites", 0)
+    fix_col = EMERALD if fix else ROSE
+    draw.ellipse([10, HEIGHT-22, 18, HEIGHT-14], fill=fix_col)
+    draw.text((25, HEIGHT-25), f"{sats} SATS" if fix else "SEARCHING...", fill=SLATE, font=get_font(ImageFont, "med", 12))
 
 
-# ─── Renderers ───────────────────────────────────────
+# ─── Modern Page Renderers ───────────────────────────
 
-def _render_summary_page(draw, ImageFont, data):
-    """Page 1: Main Cluster (Speed, AQI, Time)."""
-    _draw_header(draw, ImageFont, "S-TYPE TELEMETRY", CYAN)
-
+def _render_cockpit_main(draw, ImageFont, data):
+    """Luxury Driving HUD."""
     gps = data.get("gps") or {}
     env = data.get("env") or {}
-
-    # Large Speed (KM/H)
+    
+    # 1. LARGE CENTER SPEED
     speed_knots = gps.get("speed_knots")
     s_val = (speed_knots * 1.852) if speed_knots else 0
+    
+    # Glow Arc
+    bbox = [60, 40, 260, 240]
+    draw.arc(bbox, 140, 400, fill=DIM, width=4)
+    pct = min(1, s_val / 140)
+    if pct > 0:
+        draw.arc(bbox, 140, 140 + int(260 * pct), fill=CYAN, width=6)
+    
     spd_str = f"{int(s_val)}" if speed_knots else "--"
-    _text_centered(draw, ImageFont, WIDTH//2, 100, spd_str, 80, WHITE, True)
-    _text_centered(draw, ImageFont, WIDTH//2, 150, "KM/H", 14, CYAN)
+    _text_centered(draw, ImageFont, WIDTH//2, 110, spd_str, 84, WHITE, family="bold")
+    _text_centered(draw, ImageFont, WIDTH//2, 165, "KM/H", 16, CYAN)
 
-    # Left: AQI
+    # 2. LEFT FLANK: IAQ
     iaq = env.get("iaq_score")
-    i_str = str(int(iaq)) if iaq is not None else "--"
-    i_col = GREEN if (iaq and iaq <= 50) else (YELLOW if (iaq and iaq <= 150) else RED)
-    _text_centered(draw, ImageFont, 60, 100, i_str, 30, i_col, True)
-    _text_centered(draw, ImageFont, 60, 130, "IAQ", 12, TEXT_DIM)
+    i_col = EMERALD if (iaq and iaq <= 50) else (AMBER if (iaq and iaq <= 150) else ROSE)
+    _text_centered(draw, ImageFont, 50, 80, "AIR", 12, SLATE)
+    _text_centered(draw, ImageFont, 50, 105, str(int(iaq)) if iaq else "--", 28, i_col, family="bold")
 
-    # Right: Satellites
-    sats = gps.get("satellites", 0)
-    _text_centered(draw, ImageFont, 260, 100, str(sats), 30, YELLOW if sats > 0 else RED, True)
-    _text_centered(draw, ImageFont, 260, 130, "SATS", 12, TEXT_DIM)
-
-    # Bottom Details
+    # 3. RIGHT FLANK: TEMP
     temp = env.get("temperature")
-    t_str = f"{temp:.1f}°C" if temp else "--°C"
-    _text_centered(draw, ImageFont, 60, 190, t_str, 18, CYAN)
-    
-    _text_centered(draw, ImageFont, WIDTH//2, 190, time.strftime("%H:%M:%S"), 22, WHITE)
-    
-    alt = gps.get("alt")
-    a_str = f"{int(alt)}m" if alt else "--m"
-    _text_centered(draw, ImageFont, 260, 190, a_str, 18, PURPLE)
+    _text_centered(draw, ImageFont, 270, 80, "CABIN", 12, SLATE)
+    _text_centered(draw, ImageFont, 270, 105, f"{int(temp)}°C" if temp else "--°", 28, WHITE, family="bold")
+
+    _draw_status_bar(draw, ImageFont, data)
 
 
-def _render_imu_page(draw, ImageFont, data):
-    """Page 2: IMU / G-Force Visualizer."""
-    _draw_header(draw, ImageFont, "G-FORCE ANALYTICS", PURPLE)
-    
+def _render_cockpit_imu(draw, ImageFont, data):
+    """High-Res G-Force Tracker."""
     imu = data.get("imu") or {}
-    # Draw a 2D G-Force crosshair
-    cx, cy = WIDTH//2, HEIGHT//2 + 10
-    size = 70
+    ax, ay = imu.get("ax", 0), imu.get("ay", 0)
     
-    # Background Grid
-    draw.ellipse([cx-size, cy-size, cx+size, cy+size], outline=DIM, width=1)
-    draw.ellipse([cx-size//2, cy-size//2, cx+size//2, cy+size//2], outline=DIM, width=1)
-    draw.line([cx-size-10, cy, cx+size+10, cy], fill=DIM, width=1)
-    draw.line([cx, cy-size-10, cx, cy+size+10], fill=DIM, width=1)
-
-    # Current G-point
-    # Assuming ax, ay are in Gs
-    ax = imu.get("ax", 0)
-    ay = imu.get("ay", 0)
+    # Grid
+    cx, cy = WIDTH//2, HEIGHT//2 - 10
+    for r in [40, 80]:
+        draw.ellipse([cx-r, cy-r, cx+r, cy+r], outline=DIM, width=1)
+    draw.line([cx-90, cy, cx+90, cy], fill=DIM)
+    draw.line([cx, cy-90, cx, cy+90], fill=DIM)
     
-    # Scale: 1G = size pixels
-    mx = cx + int(ay * size)  # Side Gs
-    my = cy + int(ax * size)  # Longitudinal Gs (approx)
+    # Dot with tail
+    mx, my = cx + int(ay * 80), cy + int(ax * 80)
+    draw.ellipse([mx-6, my-6, mx+6, my+6], fill=ROSE)
     
-    # Keep in bounds
-    mx = max(cx-size, min(cx+size, mx))
-    my = max(cy-size, min(cy+size, my))
-    
-    # Draw Dot
-    draw.ellipse([mx-5, my-5, mx+5, my+5], fill=PURPLE)
-    
-    # Labels
-    _text_centered(draw, ImageFont, cx, cy-size-20, "FORWARD", 10, TEXT_DIM)
-    _text_centered(draw, ImageFont, cx-size-30, cy, "LEFT", 10, TEXT_DIM)
-    _text_centered(draw, ImageFont, cx+size+30, cy, "RIGHT", 10, TEXT_DIM)
+    _text_centered(draw, ImageFont, WIDTH//2, 20, "LATERAL DYNAMICS", 14, ROSE, family="bold")
     
     g_total = math.sqrt(ax**2 + ay**2)
-    _text_centered(draw, ImageFont, WIDTH//2, HEIGHT-20, f"PEAK: {g_total:.2f}G", 14, WHITE)
-
-
-def _render_obd_page(draw, ImageFont, data):
-    """Page 3: OBD / Engine (RPM + Coolant)."""
-    _draw_header(draw, ImageFont, "ENGINE DIAGNOSTICS", YELLOW)
+    _text_centered(draw, ImageFont, WIDTH//2, HEIGHT-60, f"{g_total:.2f} G", 24, WHITE, family="bold")
     
+    _draw_status_bar(draw, ImageFont, data)
+
+
+def _render_cockpit_engine(draw, ImageFont, data):
+    """Audi-style Engine View."""
     obd = data.get("obd") or {}
     rpm = obd.get("RPM", {}).get("value")
     
+    _text_centered(draw, ImageFont, WIDTH//2, 25, "POWER UNIT", 14, AMBER, family="bold")
+    
     if rpm is None:
-        _text_centered(draw, ImageFont, WIDTH//2, HEIGHT//2, "WAITING FOR OBD...", 20, RED)
-        return
+        _text_centered(draw, ImageFont, WIDTH//2, HEIGHT//2, "LINKING OBD...", 16, SLATE)
+    else:
+        # Precision Bar
+        bar_x, bar_y = 40, 80
+        bar_w, bar_h = 240, 40
+        draw.rectangle([bar_x, bar_y, bar_x+bar_w, bar_y+bar_h], fill=DIM)
+        pct = min(1, rpm / 7500)
+        draw.rectangle([bar_x, bar_y, bar_x + int(bar_w*pct), bar_y+bar_h], fill=AMBER if pct < 0.85 else ROSE)
+        
+        _text_centered(draw, ImageFont, WIDTH//2, bar_y+20, f"{int(rpm)} RPM", 20, WHITE, family="bold")
 
-    # RPM Gauge Bar
-    y_bar = 90
-    bar_w = 260
-    draw.rectangle([30, y_bar, 30+bar_w, y_bar+30], outline=MID, width=2)
-    
-    pct = min(1, rpm / 7000)
-    col = GREEN if pct < 0.7 else (YELLOW if pct < 0.9 else RED)
-    draw.rectangle([32, y_bar+2, 32 + int((bar_w-4)*pct), y_bar+28], fill=col)
-    
-    _text_centered(draw, ImageFont, WIDTH//2, y_bar+15, f"{int(rpm)} RPM", 18, WHITE, True)
-    
-    # Coolant & Voltage
-    coolant = obd.get("COOLANT_TEMP", {}).get("value")
-    c_str = f"{int(coolant)}°C" if coolant else "--"
-    _text_centered(draw, ImageFont, 80, 160, c_str, 24, YELLOW, True)
-    _text_centered(draw, ImageFont, 80, 185, "COOLANT", 12, TEXT_DIM)
-    
+    # Metrics
     volt = obd.get("CONTROL_MODULE_VOLTAGE", {}).get("value")
-    v_str = f"{volt:.1f}V" if volt else "--"
-    _text_centered(draw, ImageFont, 240, 160, v_str, 24, CYAN, True)
-    _text_centered(draw, ImageFont, 240, 185, "VOLTAGE", 12, TEXT_DIM)
+    _text_centered(draw, ImageFont, 80, 160, f"{volt:.1f}V" if volt else "--V", 22, WHITE, family="bold")
+    _text_centered(draw, ImageFont, 80, 185, "VOLTAGE", 11, SLATE)
+    
+    cool = obd.get("COOLANT_TEMP", {}).get("value")
+    _text_centered(draw, ImageFont, 240, 160, f"{int(cool)}°C" if cool else "--°C", 22, WHITE, family="bold")
+    _text_centered(draw, ImageFont, 240, 185, "COOLANT", 11, SLATE)
+
+    _draw_status_bar(draw, ImageFont, data)
 
 
-PAGES = [_render_summary_page, _render_imu_page, _render_obd_page]
+def _render_cockpit_env(draw, ImageFont, data):
+    """Ambient Environment View (Active when OBD off)."""
+    env = data.get("env") or {}
+    gps = data.get("gps") or {}
+    
+    _text_centered(draw, ImageFont, WIDTH//2, 25, "AMBIENT ENVIRONMENT", 14, EMERALD, family="bold")
 
-# ─── Poller ──────────────────────────────────────────
+    # 1. CENTER: AIR QUALITY GAUGE
+    iaq = env.get("iaq_score")
+    i_col = EMERALD if (iaq and iaq <= 50) else (AMBER if (iaq and iaq <= 150) else ROSE)
+    
+    bbox = [100, 60, 220, 180]
+    draw.arc(bbox, 135, 405, fill=DIM, width=4)
+    if iaq:
+        pct = min(1, iaq / 300)
+        draw.arc(bbox, 135, 135 + int(270 * pct), fill=i_col, width=6)
+    
+    _text_centered(draw, ImageFont, WIDTH//2, 110, str(int(iaq)) if iaq else "--", 48, i_col, family="bold")
+    _text_centered(draw, ImageFont, WIDTH//2, 150, "IAQ INDEX", 12, SLATE)
+
+    # 2. TOP LEF: TEMPERATURE
+    temp = env.get("temperature")
+    _text_centered(draw, ImageFont, 60, 70, f"{temp:.1f}°" if temp else "--°", 22, WHITE, family="bold")
+    _text_centered(draw, ImageFont, 60, 90, "TEMP", 10, SLATE)
+
+    # 3. TOP RIGHT: HUMIDITY
+    humi = env.get("humidity")
+    _text_centered(draw, ImageFont, 260, 70, f"{int(humi)}%" if humi else "--%", 22, CYAN, family="bold")
+    _text_centered(draw, ImageFont, 260, 90, "HUMIDITY", 10, SLATE)
+
+    # 4. BOTTOM LEFT: PRESSURE
+    pres = env.get("pressure")
+    p_str = f"{int(pres/100)}" if pres else "---"
+    _text_centered(draw, ImageFont, 60, 160, p_str, 22, AMBER, family="bold")
+    _text_centered(draw, ImageFont, 60, 180, "HPA", 10, SLATE)
+
+    # 5. BOTTOM RIGHT: ELEVATION
+    alt = gps.get("alt")
+    _text_centered(draw, ImageFont, 260, 160, f"{int(alt)}m" if alt else "--m", 22, PURPLE if 'PURPLE' in globals() else CYAN, family="bold")
+    _text_centered(draw, ImageFont, 260, 180, "ALTITUDE", 10, SLATE)
+
+    _draw_status_bar(draw, ImageFont, data)
+
+
+PAGES = [_render_cockpit_main, _render_cockpit_imu, _render_cockpit_engine, _render_cockpit_env]
+
 
 class DisplayPoller:
-    """Async poller for ST7789V LCD with rotating pages."""
-
     def __init__(self, gps_poller=None, obd_poller=None, bme680_poller=None, imu_poller=None):
         self._running = False
-        self._gps = gps_poller
-        self._obd = obd_poller
-        self._bme = bme680_poller
-        self._imu = imu_poller
+        self._gps, self._obd, self._bme, self._imu = gps_poller, obd_poller, bme680_poller, imu_poller
         self._page = 0
-        self._device = None
-        self._Image = None
-        self._ImageDraw = None
-        self._ImageFont = None
+        self._device, self._Image, self._ImageDraw, self._ImageFont = None, None, None, None
 
-    def _collect_data(self) -> dict:
-        data = {}
-        if self._gps and self._gps.last_fix:
-            data["gps"] = self._gps.last_fix
-        if self._obd:
-            data["obd"] = self._obd.latest
-        if self._bme and self._bme.last_reading:
-            data["env"] = self._bme.last_reading
-        if self._imu:
-            # We need the last IMU reading from memory
-            data["imu"] = self._imu.last_reading if hasattr(self._imu, "last_reading") else {}
-        return data
+    def _collect_data(self):
+        d = {}
+        if self._gps and self._gps.last_fix: d["gps"] = self._gps.last_fix
+        if self._obd: d["obd"] = self._obd.latest
+        if self._bme and self._bme.last_reading: d["env"] = self._bme.last_reading
+        if self._imu: d["imu"] = self._imu.last_reading if hasattr(self._imu, "last_reading") else {}
+        return d
 
     async def run(self):
         self._running = True
-        self._device, self._Image, self._ImageDraw, self._ImageFont = await asyncio.get_event_loop().run_in_executor(
-            None, _try_import
-        )
-
-        if not self._device:
-            while self._running:
-                await asyncio.sleep(60)
-            return
-
-        logger.info("Display Poller Started — %d Pages, %ds Refresh", len(PAGES), config.DISPLAY_PAGE_SEC)
+        self._device, self._Image, self._ImageDraw, self._ImageFont = await asyncio.get_event_loop().run_in_executor(None, _try_import)
+        if not self._device: return
 
         while self._running:
             try:
                 data = self._collect_data()
+                obd_active = data.get("obd", {}).get("RPM") is not None
                 
-                # Dynamically filter pages based on data availability
-                active_pages = [PAGES[0]] # Always show summary
+                # Determine active pages based on OBD connection
+                if obd_active:
+                    # Driving Mode: Show Speedo + G-Force + Engine
+                    active = [PAGES[0], PAGES[1], PAGES[2]]
+                else:
+                    # Ambient Mode: Show Env + G-Force (if IMU active)
+                    active = [PAGES[3]] # Start with Environment UI
+                    if data.get("imu", {}).get("ax") is not None:
+                        active.append(PAGES[1])
                 
-                # Check for IMU data
-                if data.get("imu") and (data["imu"].get("ax") is not None):
-                    active_pages.append(PAGES[1])
-                
-                # Check for OBD data
-                obd_data = data.get("obd", {})
-                if obd_data and "RPM" in obd_data:
-                    active_pages.append(PAGES[2])
-                
-                # Render current page from active list
-                render_fn = active_pages[self._page % len(active_pages)]
-                
-                # Create canvas
+                render_fn = active[self._page % len(active)]
                 img = self._Image.new("RGB", (WIDTH, HEIGHT), BG)
-                draw = self._ImageDraw.Draw(img)
-                
-                render_fn(draw, self._ImageFont, data)
+                render_fn(self._ImageDraw.Draw(img), self._ImageFont, data)
                 self._device.display(img)
-                
                 self._page += 1
-
             except Exception as e:
-                logger.error("Display render error: %s", e)
-
+                logger.error("Display UI error: %s", e)
             await asyncio.sleep(config.DISPLAY_PAGE_SEC)
 
     def stop(self):
         self._running = False
-        try:
-            if self._device:
-                self._device.cleanup()
-        except Exception:
-            pass
+        if self._device: self._device.cleanup()
