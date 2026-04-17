@@ -586,8 +586,8 @@ def api_env_stats():
         SELECT 
             AVG(temperature) as avg_temp, MIN(temperature) as min_temp, MAX(temperature) as max_temp,
             AVG(humidity) as avg_hum, MIN(humidity) as min_hum, MAX(humidity) as max_hum,
-            AVG(CASE WHEN iaq_score > 0 THEN iaq_score END) as avg_iaq, 
-            MIN(CASE WHEN iaq_score > 0 THEN iaq_score END) as min_iaq, 
+            AVG(CASE WHEN iaq_score >= 1 THEN iaq_score END) as avg_iaq, 
+            MIN(CASE WHEN iaq_score >= 1 THEN iaq_score END) as min_iaq, 
             MAX(iaq_score) as max_iaq
         FROM env_readings 
         WHERE ts >= ?

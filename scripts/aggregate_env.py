@@ -46,7 +46,7 @@ def run_aggregation():
             SELECT 
                 AVG(temperature) as avg_temp,
                 AVG(humidity) as avg_hum,
-                AVG(CASE WHEN iaq_score > 0 THEN iaq_score END) as avg_iaq,
+                AVG(CASE WHEN iaq_score >= 1 THEN iaq_score END) as avg_iaq,
                 COUNT(*) as readings_count
             FROM env_readings
             WHERE ts >= ? AND ts < ?
