@@ -9,7 +9,15 @@ let currentPage = 'dashboard';
 let imgPage = 0;
 let envData = [];
 let envChartInstance = null;
-let lastEnvFetch = 0;
+let currentEnvRange = '1h';
+
+// Env Range Mapping
+const ENV_RANGES = {
+    '1h': { bucket: 60, duration: 3600 },
+    '6h': { bucket: 300, duration: 6 * 3600 },
+    '24h': { bucket: 900, duration: 24 * 3600 },
+    '7d': { bucket: 7200, duration: 7 * 24 * 3600 }
+};
 
 // ─── Tab Navigation ─────────────────────────────
 
@@ -451,12 +459,21 @@ function initOrUpdateChart() {
     });
 }
 
-async function updateEnvHistory() {
-    console.log("Fetching env history...");
+async function refreshEnvHistory() {
     try {
-        const res = await fetch('/api/env/history?limit=120');
+        let url = '/api/env/history';
+
+        if (currentEnvRange === '1h') {
+            url += '?limit=120';
+        } else {
+            const range = ENV_RANGES[currentEnvRange];
+            const end = Math.floor(Date.now() / 1000);
+            const start = end - range.duration;
+            url += `?start=${start}&end=${end}&bucket=${range.bucket}`;
+        }
+
+        const res = await fetch(url);
         envData = await res.json();
-        console.log(`Loaded ${envData.length} env points`);
         initOrUpdateEnvChart();
     } catch (e) {
         console.error("Failed to load env history", e);
@@ -479,7 +496,12 @@ function initOrUpdateEnvChart() {
     const ctx = canvas.getContext('2d');
     const labels = envData.map(d => {
         let date = new Date(d.ts * 1000);
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        return date.toLocaleTimeString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        });
     });
 
     console.log(`Starting env chart render with ${envData.length} pts`);
@@ -522,21 +544,56 @@ function initOrUpdateEnvChart() {
                         borderColor: '#a3e635',
                         yAxisID: 'y2',
                         tension: 0.3,
-                        pointRadius: 0,
+                        pointRadius: 2,
                         backgroundColor: 'rgba(163, 230, 53, 0.05)',
                         fill: true
                     }
                 ]
             },
+            plugins: [{
+                id: 'dayNightShade',
+                beforeDraw: (chart) => {
+                    const { ctx, chartArea, scales: { x } } = chart;
+                    if (!envData || envData.length < 2) return;
+                    ctx.save();
+                    envData.forEach((d, i) => {
+                        if (i === 0) return;
+                        const date = new Date(d.ts * 1000);
+                        const istHour = new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: 'Asia/Kolkata' }).format(date);
+                        const h = parseInt(istHour);
+                        if (h >= 19 || h < 6) {
+                            const left = x.getPixelForValue(i - 1);
+                            const right = x.getPixelForValue(i);
+                            ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+                            ctx.fillRect(left, chartArea.top, right - left, chartArea.bottom - chartArea.top);
+                        }
+                    });
+                    ctx.restore();
+                }
+            }],
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 animation: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
                 plugins: {
-                    legend: { display: true, position: 'top', labels: { color: '#94a3b8', font: { size: 10 } } }
+                    legend: { display: true, position: 'top', labels: { color: '#94a3b8', font: { size: 10 } } },
+                    tooltip: {
+                        enabled: true,
+                        backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                        titleColor: '#f8fafc',
+                        bodyColor: '#94a3b8',
+                        borderColor: 'rgba(255, 255, 255, 0.1)',
+                        borderWidth: 1,
+                        padding: 10,
+                        displayColors: true,
+                    }
                 },
                 scales: {
-                    x: { ticks: { color: '#64748b', maxTicksLimit: 6 } },
+                    x: { ticks: { color: '#64748b', maxTicksLimit: 6 }, grid: { display: false } },
                     y: {
                         position: 'left',
                         ticks: { color: '#94a3b8' },
@@ -1205,10 +1262,20 @@ setInterval(() => {
     if (currentPage === 'images') loadImages(true);
 }, IMG_REFRESH_MS);
 
+// Setup Range Selectors
+document.querySelectorAll('.range-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentEnvRange = btn.dataset.range;
+        refreshEnvHistory();
+    });
+});
+
 // Refresh environmental history every 30s
-updateEnvHistory();
+refreshEnvHistory();
 setInterval(() => {
-    if (currentPage === 'overview' || currentPage === 'dashboard') updateEnvHistory();
+    if (currentPage === 'overview' || currentPage === 'dashboard') refreshEnvHistory();
 }, 30000);
 
 // ─── Toggles & Overrides ────────────────────────

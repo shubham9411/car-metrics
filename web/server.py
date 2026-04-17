@@ -487,9 +487,51 @@ def api_gforce():
 
 @app.route("/api/env/history")
 def api_env_history():
-    """Get recent environmental readings for charting."""
-    limit = min(int(request.query.get("limit", 120)), 1000)
+    """Get historical environmental readings with optional downsampling."""
+    start = request.query.get("start")
+    end = request.query.get("end")
+    bucket = request.query.get("bucket")
+
     conn = db.get_connection()
+    
+    if start and end and bucket:
+        # Aggregated query for historical ranges
+        try:
+            b_size = int(bucket)
+            s_ts = float(start)
+            e_ts = float(end)
+            
+            # Bucket aggregation: group by time slices
+            query = """
+                SELECT 
+                    (CAST(ts / ? AS INT) * ?) as bucket_ts,
+                    AVG(temperature) as avg_temp,
+                    AVG(humidity) as avg_hum,
+                    AVG(iaq_score) as avg_iaq
+                FROM env_readings 
+                WHERE ts >= ? AND ts <= ?
+                GROUP BY bucket_ts
+                ORDER BY bucket_ts ASC
+            """
+            rows = conn.execute(query, (b_size, b_size, s_ts, e_ts)).fetchall()
+            
+            points = []
+            for r in rows:
+                points.append({
+                    "ts": r["bucket_ts"],
+                    "temp": round(r["avg_temp"], 2) if r["avg_temp"] else None,
+                    "hum": round(r["avg_hum"], 1) if r["avg_hum"] else None,
+                    "iaq": int(r["avg_iaq"]) if r["avg_iaq"] else None
+                })
+            
+            response.content_type = "application/json"
+            return json.dumps(points)
+        except Exception as e:
+            logger.error("Failed aggregated env query: %s", e)
+            # fall through to default
+
+    # Default: last N points
+    limit = min(int(request.query.get("limit", 120)), 1000)
     rows = conn.execute(
         "SELECT ts, temperature, humidity, iaq_score FROM env_readings ORDER BY id DESC LIMIT ?",
         (limit,),

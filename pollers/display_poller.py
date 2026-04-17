@@ -93,8 +93,10 @@ def _draw_status_bar(draw, ImageFont, data):
     draw.rectangle([(0, HEIGHT-35), (WIDTH, HEIGHT)], fill="#0a0f1a")
     draw.line([(0, HEIGHT-35), (WIDTH, HEIGHT-35)], fill=DIM, width=1)
     
-    # Time
-    _text_centered(draw, ImageFont, WIDTH-40, HEIGHT-17, time.strftime("%H:%M"), 14, WHITE)
+    # Time (IST)
+    ist = timezone(timedelta(hours=5, minutes=30))
+    time_str = datetime.now(ist).strftime("%H:%M")
+    _text_centered(draw, ImageFont, WIDTH-40, HEIGHT-17, time_str, 14, WHITE)
     
     # GPS Fix
     gps = data.get("gps", {})

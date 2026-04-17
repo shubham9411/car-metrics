@@ -213,6 +213,13 @@ def _init_schema(conn: sqlite3.Connection):
 
     conn.commit()
 
+    # Indexing for performance
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_env_readings_ts ON env_readings(ts)")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+
 
 # ─── Insert helpers ───────────────────────────────
 
